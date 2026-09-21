@@ -1,0 +1,5 @@
+# Git hooks (installed by `pnpm install` through lefthook's postinstall).
+pre-push:
+  jobs:
+    - name: check
+      run: pnpm check

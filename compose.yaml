@@ -1,0 +1,80 @@
+# MyHarness — ambiente de desenvolvimento no WSL com Docker.
+# Uso (de dentro do WSL, na pasta do repositório):
+#   docker compose up -d dev          # sobe o container de trabalho
+#   docker compose exec dev bash      # entra nele
+#   docker compose run --rm check     # roda a checagem completa (lint, tipos, testes)
+#   docker compose --profile gui up app   # abre a janela do app pelo WSLg (Windows 11)
+
+name: my-harness
+
+x-base: &base
+  build:
+    context: .
+    dockerfile: docker/dev.Dockerfile
+    args:
+      USER_UID: ${USER_UID:-1000}
+      USER_GID: ${USER_GID:-1000}
+  image: my-harness-dev:latest
+  working_dir: /workspace
+  volumes:
+    - .:/workspace
+    - cargo-registry:/usr/local/cargo/registry
+    - cargo-git:/usr/local/cargo/git
+    - target:/workspace/target
+    - node-modules:/workspace/node_modules
+    - pnpm-store:/home/dev/.pnpm-store
+    # Login do Claude CLI só deste ambiente: não herda as configurações pessoais do Claude Code
+    - claude-home:/home/dev/.claude
+  env_file:
+    - path: .env
+      required: false
+  # O Obsidian roda no Windows: o container fala com ele por um servidor MCP no Windows (HTTP),
+  # alcançado pelo nome host.docker.internal.
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  dev:
+    <<: *base
+    command: ["sleep", "infinity"]
+    ports:
+      - "1420:1420" # servidor do Vite (tela no navegador, com o núcleo simulado)
+      - "1421:1421" # HMR do Vite
+
+  check:
+    <<: *base
+    profiles: ["check"]
+    command: ["bash", "-lc", "pnpm install --frozen-lockfile && pnpm check"]
+
+  app:
+    <<: *base
+    profiles: ["gui"]
+    command: ["bash", "-lc", "pnpm install && dbus-run-session -- pnpm tauri dev"]
+    environment:
+      # WSLg: a janela Linux aparece no Windows 11
+      DISPLAY: ${DISPLAY:-:0}
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
+      XDG_RUNTIME_DIR: /mnt/wslg/runtime-dir
+      PULSE_SERVER: /mnt/wslg/PulseServer
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+    volumes:
+      - .:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - target:/workspace/target
+      - node-modules:/workspace/node_modules
+      - pnpm-store:/home/dev/.pnpm-store
+      - claude-home:/home/dev/.claude
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /mnt/wslg:/mnt/wslg
+    ports:
+      - "1420:1420"
+      - "1421:1421"
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  target:
+  node-modules:
+  pnpm-store:
+  claude-home:
