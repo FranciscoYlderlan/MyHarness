@@ -1,0 +1,8 @@
+target/
+node_modules/
+dist/
+.env
+*.log
+src-tauri/gen/
+coverage/
+prototipos/
