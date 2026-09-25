@@ -3,5 +3,4 @@ node_modules/
 dist/
 pnpm-lock.yaml
 src-tauri/gen/
-docs/contrato/
 *.md
