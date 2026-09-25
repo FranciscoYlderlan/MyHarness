@@ -7,6 +7,8 @@
 
 use std::fmt;
 
+use super::segredo::TextoMascarado;
+
 /// Tipo da integração (campo `tipo` de ENT-13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TipoIntegracao {
@@ -147,17 +149,17 @@ pub enum ErroIntegracao {
     #[error("Conexão com o GitHub não concluída")]
     GithubOauthNaoConcluido(MotivoOauthNaoConcluido),
     /// ERR-03: o Obsidian está fechado ao checar o status (UC-01 FE-03).
-    /// Guarda a mensagem da própria CLI, que é a mostrada ao Humano.
+    /// Guarda a mensagem da própria CLI, que é a mostrada ao Humano, já mascarada (RN-04).
     #[error("{mensagem_da_cli}")]
     ObsidianFechado {
-        /// Texto devolvido pela Obsidian CLI.
-        mensagem_da_cli: String,
+        /// Texto devolvido pela Obsidian CLI, mascarado.
+        mensagem_da_cli: TextoMascarado,
     },
-    /// ERR-04: o login do Claude CLI falhou; guarda o motivo.
+    /// ERR-04: o login do Claude CLI falhou; guarda o motivo, já mascarado (RN-04).
     #[error("{motivo}")]
     LoginClaudeCliFalhou {
-        /// Motivo da falha.
-        motivo: String,
+        /// Motivo da falha, mascarado.
+        motivo: TextoMascarado,
     },
     /// ERR-05: ação que depende do Claude CLI com ele desconectado (RN-08).
     #[error("Conecte o Claude CLI para enviar")]
@@ -385,6 +387,38 @@ mod tests {
             ErroIntegracao::desconectada(TipoIntegracao::ObsidianCli).id(),
             "ERR-07"
         );
+    }
+
+    #[test]
+    fn texto_livre_da_cli_sai_mascarado_no_display_e_no_debug() {
+        let token = "ghp_A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvWx";
+        let erros = [
+            ErroIntegracao::ObsidianFechado {
+                mensagem_da_cli: format!("falhou com \"{token}\" no vault").into(),
+            },
+            ErroIntegracao::LoginClaudeCliFalhou {
+                motivo: format!("{token} recusado; de novo {}", token.to_uppercase()).into(),
+            },
+        ];
+        for erro in &erros {
+            for saida in [erro.to_string(), format!("{erro:?}"), format!("{erro:#?}")] {
+                assert!(!saida.to_lowercase().contains("a1b2c3d4"), "{saida}");
+                assert!(saida.contains(crate::domain::segredo::MASCARA), "{saida}");
+            }
+        }
+        assert_eq!(erros[0].to_string(), "falhou com \"••••\" no vault");
+        assert_eq!(erros[1].to_string(), "•••• recusado; de novo ••••");
+        assert_eq!(
+            format!("{:?}", erros[1]),
+            "LoginClaudeCliFalhou { motivo: \"•••• recusado; de novo ••••\" }"
+        );
+    }
+
+    #[test]
+    fn mensagem_sem_token_sai_igual() {
+        let msg = "error: the argument '--token <TOKEN>' requires a value but none was supplied";
+        let erro = ErroIntegracao::LoginClaudeCliFalhou { motivo: msg.into() };
+        assert_eq!(erro.to_string(), msg);
     }
 
     #[test]
