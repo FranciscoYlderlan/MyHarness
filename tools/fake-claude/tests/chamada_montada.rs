@@ -1,0 +1,97 @@
+//! Roda o `fake-claude` com a chamada montada pelo núcleo e confere o que ele devolve.
+
+use std::ffi::OsString;
+use std::path::PathBuf;
+use std::process::Command;
+
+use my_harness_core::application::chamada_claude::{ChamadaClaude, montar_chamada};
+use my_harness_core::domain::execucao::EspecificacaoExecucao;
+use serde_json::Value;
+
+fn especificacao() -> EspecificacaoExecucao {
+    let tmp = std::env::temp_dir();
+    EspecificacaoExecucao {
+        papel: "implementador".into(),
+        prompt_do_papel: "Você é o implementador; entregue uma tarefa só.".into(),
+        prompt_da_tarefa: "-p começa com hífen e tem \"aspas\", $HOME e espaços".into(),
+        modelo: "sonnet".into(),
+        ferramentas_permitidas: vec!["Read".into(), "Bash(cargo test:*)".into()],
+        ferramentas_proibidas: vec!["WebFetch".into()],
+        pastas_extras: vec![tmp.join("pasta com espaço")],
+        portao: tmp.join("harness-gate"),
+        mcp_config: Some(tmp.join("mcp.json")),
+    }
+}
+
+/// Roda o binário fake como o `AgentRunner` fará: ambiente herdado limpo, só o montado.
+fn rodar(chamada: &ChamadaClaude) -> Vec<Value> {
+    let saida = Command::new(env!("CARGO_BIN_EXE_fake-claude"))
+        .args(chamada.argumentos())
+        .env_clear()
+        .envs(chamada.ambiente().iter().cloned())
+        .output()
+        .expect("fake-claude abre");
+    assert!(saida.status.success(), "{saida:?}");
+    String::from_utf8(saida.stdout)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("cada linha é um JSON"))
+        .collect()
+}
+
+#[test]
+fn fake_devolve_os_argumentos_montados_em_stream_json() {
+    let mut pai: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+    pai.push(("GITHUB_TOKEN".into(), "ghp_naoDeveChegar".into()));
+    pai.push(("GH_TOKEN".into(), "gho_naoDeveChegar".into()));
+    pai.push(("MEU_TESTE_FICA".into(), "1".into()));
+    let chamada = montar_chamada(&especificacao(), pai).unwrap();
+
+    let eventos = rodar(&chamada);
+    assert_eq!(eventos.len(), 3, "{eventos:?}");
+
+    assert_eq!(eventos[0]["type"], "system");
+    assert_eq!(eventos[0]["subtype"], "init");
+    assert_eq!(eventos[0]["model"], "sonnet");
+    assert_eq!(eventos[0]["permissionMode"], "dontAsk");
+
+    let recebidos: Vec<&str> = eventos[1]["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(recebidos, chamada.argumentos());
+    // Cada argumento chegou inteiro, inclusive o vazio e o prompt com espaços e aspas.
+    let n = recebidos.len();
+    assert_eq!(recebidos[n - 2], "--");
+    assert_eq!(
+        recebidos[n - 1],
+        "-p começa com hífen e tem \"aspas\", $HOME e espaços"
+    );
+    let fonte = recebidos
+        .iter()
+        .position(|a| *a == "--setting-sources")
+        .unwrap();
+    assert_eq!(recebidos[fonte + 1], "");
+    let pasta =
+        PathBuf::from(recebidos[recebidos.iter().position(|a| *a == "--add-dir").unwrap() + 1]);
+    assert_eq!(pasta, std::env::temp_dir().join("pasta com espaço"));
+
+    let env: Vec<&str> = eventos[1]["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(env.contains(&"MEU_TESTE_FICA"), "{env:?}");
+    assert!(
+        !env.iter()
+            .any(|n| n.eq_ignore_ascii_case("GITHUB_TOKEN") || n.eq_ignore_ascii_case("GH_TOKEN")),
+        "{env:?}"
+    );
+
+    assert_eq!(eventos[2]["type"], "result");
+    assert_eq!(eventos[2]["subtype"], "success");
+    assert_eq!(eventos[2]["is_error"], false);
+}
