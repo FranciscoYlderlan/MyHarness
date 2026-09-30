@@ -10,7 +10,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::PathBuf;
 
-use super::segredo::{MASCARA, PREFIXOS, TextoMascarado};
+use super::segredo::{MASCARA, TextoMascarado, contem_token_do_github};
 
 /// O que o núcleo precisa para abrir um agente: papel, modelo, ferramentas, pastas e prompts.
 #[derive(Clone, PartialEq, Eq)]
@@ -89,6 +89,9 @@ pub enum MotivoCaminho {
     NaoUtf8,
     /// Caractere que o shell do gancho interpretaria (`"`, `` ` ``, `$`, `%`, `!`) ou de controle.
     CaractereProibido,
+    /// Portão com `\` no fim ou `\` seguido de outro `\`: dentro das aspas duplas do shell
+    /// do gancho, o primeiro escaparia a aspa de fechamento ou o segundo.
+    BarraInvertida,
 }
 
 impl fmt::Display for MotivoCaminho {
@@ -98,6 +101,7 @@ impl fmt::Display for MotivoCaminho {
             MotivoCaminho::Relativo => "relativo",
             MotivoCaminho::NaoUtf8 => "não é UTF-8",
             MotivoCaminho::CaractereProibido => "com caractere proibido",
+            MotivoCaminho::BarraInvertida => "com barra invertida no fim ou dobrada",
         })
     }
 }
@@ -202,8 +206,10 @@ pub(crate) fn ferramenta_valida(ferramenta: &str) -> bool {
 ///   `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`, `COPILOT_GITHUB_TOKEN`, `ACTIONS_RUNTIME_TOKEN`…);
 /// - é `GITHUB_PAT` ou `GH_PAT`;
 ///
-/// e toda variável cujo valor começa por um prefixo de token do GitHub (`ghp_`, `github_pat_`…).
-/// O resto passa na ordem recebida.
+/// e toda variável cujo valor **contém**, em qualquer posição, um token do GitHub pela regra
+/// da máscara ([`contem_token_do_github`]: `ghp_`, `github_pat_`… seguido de pelo menos 1
+/// caractere de token), como `https://x-access-token:ghs_…@github.com/o/r` ou
+/// `Authorization: bearer ghp_…`. O resto passa na ordem recebida.
 pub fn ambiente_sem_token_do_github<I>(ambiente: I) -> Vec<(OsString, OsString)>
 where
     I: IntoIterator<Item = (OsString, OsString)>,
@@ -222,16 +228,7 @@ fn nome_de_token_do_github(nome: &OsStr) -> bool {
 }
 
 fn valor_de_token_do_github(valor: &OsStr) -> bool {
-    let valor = valor.to_string_lossy();
-    let valor = valor.trim_start().as_bytes();
-    PREFIXOS
-        .iter()
-        .filter(|p| p.starts_with("gh") || p.starts_with("github"))
-        .any(|p| {
-            valor
-                .get(..p.len())
-                .is_some_and(|v| v.eq_ignore_ascii_case(p.as_bytes()))
-        })
+    contem_token_do_github(&valor.to_string_lossy())
 }
 
 /// Mostra só os nomes das variáveis; os valores viram [`MASCARA`].
@@ -355,6 +352,30 @@ mod tests {
             .map(|(n, _)| n)
             .collect();
         assert_eq!(nomes, ["FICA", "CHAVE"]);
+    }
+
+    #[test]
+    fn tira_token_do_github_no_meio_do_valor() {
+        let entrada = amb(&[
+            (
+                "REPO_URL",
+                "https://x-access-token:ghs_abcdefabcdef@github.com/o/r",
+            ),
+            ("GIT_CONFIG_VALUE_0", "Authorization: bearer ghp_abc"),
+            ("NO_FIM", "valor;gho_abc"),
+            ("GITHUB_PATH", "/tmp/path"),
+            ("GH_HOST", "github.com"),
+            ("ANTHROPIC_API_KEY", "sk-ant-api03-abc"),
+            ("PREFIXO_NU", "ghs_ sozinho"),
+        ]);
+        let nomes: Vec<_> = ambiente_sem_token_do_github(entrada)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(
+            nomes,
+            ["GITHUB_PATH", "GH_HOST", "ANTHROPIC_API_KEY", "PREFIXO_NU"]
+        );
     }
 
     #[test]

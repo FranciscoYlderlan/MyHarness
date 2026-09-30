@@ -37,9 +37,19 @@ pub const PREFIXOS: [&str; 7] = [
     "sk-ant-",
 ];
 
+/// Os prefixos de [`PREFIXOS`] que são de token do GitHub (todos menos `sk-ant-`).
+pub const PREFIXOS_DO_GITHUB: [&str; 6] = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"];
+
 /// Mascara os tokens com prefixo conhecido (regra 1).
 pub fn mascarar(texto: &str) -> Cow<'_, str> {
     substituir(texto, &trechos_com_prefixo(texto))
+}
+
+/// `texto` traz, em qualquer posição, um token do GitHub pela mesma regra 1 da máscara
+/// (prefixo de [`PREFIXOS_DO_GITHUB`], sem diferenciar maiúsculas, seguido de pelo menos
+/// 1 caractere de token). Sem adivinhar pelo formato: só os prefixos contam.
+pub fn contem_token_do_github(texto: &str) -> bool {
+    !trechos_dos_prefixos(texto, &PREFIXOS_DO_GITHUB).is_empty()
 }
 
 /// Mascara o valor exato de cada segredo guardado (regra 2) e os tokens com prefixo
@@ -155,13 +165,18 @@ fn substituir<'a>(texto: &'a str, trechos: &[Range<usize>]) -> Cow<'a, str> {
 /// Trechos dos tokens com prefixo conhecido. Os prefixos e o corpo do token são ASCII,
 /// então todo índice devolvido cai em fronteira de caractere UTF-8.
 fn trechos_com_prefixo(texto: &str) -> Vec<Range<usize>> {
+    trechos_dos_prefixos(texto, &PREFIXOS)
+}
+
+/// Trechos dos tokens que começam por um de `prefixos` (regra 1 com outra lista).
+fn trechos_dos_prefixos(texto: &str, prefixos: &[&str]) -> Vec<Range<usize>> {
     let bytes = texto.as_bytes();
     let de_token = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
     let mut trechos = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
         // Prefixo seguido de pelo menos 1 caractere de token; sem fronteira antes dele.
-        let prefixo = PREFIXOS.iter().find(|p| {
+        let prefixo = prefixos.iter().find(|p| {
             bytes
                 .get(i..i + p.len())
                 .is_some_and(|s| s.eq_ignore_ascii_case(p.as_bytes()))
@@ -448,6 +463,37 @@ mod tests {
             mascarar_com(&format!("<id {t} fim>"), &[&composto]),
             "<••••>"
         );
+    }
+
+    #[test]
+    fn prefixos_do_github_sao_os_de_prefixos_sem_a_anthropic() {
+        let esperado: Vec<_> = PREFIXOS.iter().filter(|p| **p != "sk-ant-").collect();
+        assert_eq!(PREFIXOS_DO_GITHUB.iter().collect::<Vec<_>>(), esperado);
+    }
+
+    #[test]
+    fn detecta_token_do_github_em_qualquer_posicao() {
+        for texto in [
+            "ghp_abc",
+            "https://x-access-token:ghs_abcdefabcdef@github.com/o/r",
+            "Authorization: bearer ghp_abc",
+            "token%3DGHO_abc",
+            "xgithub_pat_abc",
+            // dentro de um token da Anthropic, o do GitHub também conta
+            "sk-ant-xghp_abc",
+        ] {
+            assert!(contem_token_do_github(texto), "{texto:?}");
+        }
+        for texto in [
+            "",
+            "ghost",
+            "github.com",
+            "ghs_",
+            "ghs_ solto",
+            "sk-ant-api03-x",
+        ] {
+            assert!(!contem_token_do_github(texto), "{texto:?}");
+        }
     }
 
     #[test]
