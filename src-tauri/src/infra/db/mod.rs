@@ -1,5 +1,10 @@
 //! SQLite storage: one database file in the app data directory, WAL mode,
 //! versioned migrations (`src-tauri/migrations/`) applied on every open.
+//!
+//! `0002_contract_entities.sql` holds one table per contract entity that lives in SQLite
+//! (`Anexos/contrato/02-entidades.md`); [`dual_write`] writes the ones that also live in the vault.
+
+pub mod dual_write;
 
 use std::path::{Path, PathBuf};
 
