@@ -74,7 +74,32 @@ describe("esquemas do contrato IPC", () => {
     const erro: B.ErroCatalogo = { codigo: "SUBAGENTE_CAIU", id: "ERR-17", parametros: {} };
     expect(E.erroCatalogo.parse(erro)).toEqual(erro);
     expect(E.erroCatalogo.safeParse({ ...erro, codigo: "OUTRO" }).success).toBe(false);
-    expect(E.codigoErro.options).toHaveLength(54);
+    expect(E.codigoErro.options).toHaveLength(55);
+    const interno: B.ErroCatalogo = {
+      codigo: "FALHA_INTERNA",
+      id: "ERR-55",
+      parametros: { motivo: "comando ainda não implementado" },
+    };
+    expect(E.erroCatalogo.parse(interno)).toEqual(interno);
+  });
+
+  it("valida a execução com os comandos do agente", () => {
+    const execucao: B.Execucao = {
+      id: "e1",
+      chat: "c1",
+      tarefa: "t1",
+      papel: "funcionalidade",
+      modelo: "claude-opus",
+      prompt_versao: 1,
+      worktree: "/repo/wt",
+      branch: "feat/RF-01-claude-cli",
+      status: "rodando",
+      motivo_fila: null,
+      comandos: ["git status", "pnpm check"],
+    };
+    expect(E.execucao.parse(execucao)).toEqual(execucao);
+    expect(E.execucao.safeParse({ ...execucao, comandos: [1] }).success).toBe(false);
+    expect(E.execucao.safeParse({ ...execucao, comandos: undefined }).success).toBe(false);
   });
 
   it("valida cada variante da saída ao vivo", () => {
