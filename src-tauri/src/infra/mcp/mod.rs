@@ -306,8 +306,12 @@ mod tests {
     #[tokio::test]
     async fn servidor_fora_do_ar_e_rede() {
         let url = ServidorFalso::url_sem_ninguem().await;
-        let erro = SessaoMcp::abrir(&url, LIMITE).await.unwrap_err();
-        assert!(matches!(erro, ErroMcp::Rede(_)), "{erro:?}");
+        let inicio = std::time::Instant::now();
+        let erro = SessaoMcp::abrir(&url, ServidorFalso::LIMITE_FORA_DO_AR)
+            .await
+            .unwrap_err();
+        let tempo = inicio.elapsed();
+        assert!(matches!(erro, ErroMcp::Rede(_)), "{erro:?} em {tempo:?}");
     }
 
     #[tokio::test]
