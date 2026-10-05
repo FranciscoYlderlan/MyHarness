@@ -189,11 +189,16 @@ export const events = {
 /**  ENT-10 Achado. */
 export type Achado = {
   id: AchadoId;
+  /**  A execução que achou (ENT-07). */
+  execucao: ExecucaoId;
   tipo: TipoAchado;
   passos: string[];
   esperado: string;
   obtido: string;
-  /**  Caminho da imagem; obrigatório para adversarial (ERR-43 se não abrir). */
+  /**
+   *  Caminho da imagem; obrigatório quando `execucao.papel = adversarial` (ERR-43 se não
+   *  abrir).
+   */
   captura: string | null;
   /**  Bug: sempre `corrigir`. Sugestão: obrigatória ao fechar a rodada (ERR-28). */
   decisao: DecisaoAchado | null;
@@ -237,7 +242,7 @@ export type ChatMudou = {
   avisos: ErroCatalogo[];
 };
 
-/**  Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-53). */
+/**  Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-54). */
 export type CodigoErro =
   | "CLAUDE_CLI_NAO_INSTALADO"
   | "GITHUB_OAUTH_NAO_CONCLUIDO"
@@ -291,7 +296,8 @@ export type CodigoErro =
   | "STATUS_DE_CONSUMO_DESCONHECIDO"
   | "GRAVACAO_DIVERGENTE"
   | "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO"
-  | "INTEGRACAO_FALHA_INESPERADA";
+  | "INTEGRACAO_FALHA_INESPERADA"
+  | "GRAVACAO_DESFEITA_PELA_METADE";
 
 /**  ENT-02 Cofre. */
 export type Cofre = {
@@ -336,6 +342,13 @@ export type Consumo = {
 export type ConsumoAtualizado = {
   consumo: Consumo;
   avisos: ErroCatalogo[];
+};
+
+/**  ENT-24 Critério. */
+export type Criterio = {
+  status: StatusCriterio;
+  /**  Saída de teste, captura ou resposta; obrigatória para `passou` (ERR-20). */
+  prova: string | null;
 };
 
 /**
@@ -600,6 +613,32 @@ export type PromptPapel = {
   vigente: boolean;
 };
 
+/**  ENT-09 Relatório. Sem comando nem evento que o leve por ora: só o tipo do contrato. */
+export type Relatorio = {
+  id: RelatorioId;
+  /**  A execução que devolveu o relatório (ENT-07). */
+  execucao: ExecucaoId;
+  resultado: ResultadoRelatorio;
+  /**  Até 1,5 mil tokens no total (RNF-10). */
+  o_que_fez: string;
+  arquivos: string[];
+  prova: string;
+  /**  Obrigatório quando `execucao.papel = teste`. */
+  criterios: Criterio[];
+  duvidas: string[];
+  candidatos_a_nota: string[];
+  /**  Vazio até o registro; preenchido antes da próxima delegação (RN-03, ERR-15). */
+  registrado_em: DataHoraUtc | null;
+};
+
+/**  Id de um Relatório (ENT-09). */
+export type RelatorioId = string;
+
+/**  `resultado` de ENT-09. */
+export type ResultadoRelatorio =
+  /**  No fio, `concluido` (ASCII, como todo enum da IPC) = "concluído" do contrato (M-38). */
+  "concluido" | "falhou" | "bloqueado";
+
 /**  `status` de ENT-10. */
 export type StatusAchado = "aberto" | "fechado";
 
@@ -620,10 +659,24 @@ export type StatusCofre = "conectado" | "desconectado";
  */
 export type StatusConsumo = "allowed" | "allowed_warning" | "rejected" | "desconhecido";
 
+/**  `status` de ENT-24, em ASCII no fio; a tela mostra o texto do contrato. */
+export type StatusCriterio =
+  /**  ✔ no contrato; só com `prova` (ERR-20). */
+  | "passou"
+  /**  ✘ no contrato (inclusive ✘ "sem prova"). */
+  | "falhou"
+  /**  "não verificado, presumido" no contrato. */
+  | "nao_verificado_presumido";
+
 /**  `status` de ENT-07. */
 export type StatusExecucao =
   /**  "na fila" no contrato. */
-  "na_fila" | "rodando" | "concluido" | "falhou" | "interrompida";
+  | "na_fila"
+  | "rodando"
+  /**  No fio, `concluido` (ASCII, como todo enum da IPC) = "concluído" do contrato (M-38). */
+  | "concluido"
+  | "falhou"
+  | "interrompida";
 
 /**  `status` de ENT-13. */
 export type StatusIntegracao = "conectado" | "desconectado" | "sem_login" | "nao_instalado";
@@ -634,14 +687,23 @@ export type StatusPlano = "proposto" | "aprovado" | "recusado";
 /**  ENT-06 Tarefa. */
 export type Tarefa = {
   id: TarefaId;
-  /**  1 a 500 caracteres (ERR-49). */
+  /**  O plano da tarefa (ENT-05). */
+  plano: PlanoId;
+  /**  1 a 500 caracteres (ERR-49); vazio ou longo só com `incompleta = true`. */
   faz: string;
   /**  Caminhos relativos ao repositório. */
   toca_em: string[];
   depende_de: TarefaId[];
   paralelo: boolean;
+  /**  Vazio só com `incompleta = true` (ERR-49). */
   pronto_quando: string;
+  /**  Vazio só com `incompleta = true` (ERR-49). */
   prova: string;
+  /**
+   *  Marcada na 3ª devolução do plano (ERR-49); "Aprovar" fica bloqueado enquanto
+   *  houver tarefa com `incompleta = true`. Padrão: `false`.
+   */
+  incompleta: boolean;
   /**  Na tarefa, nunca `orquestrador`. */
   papel: NomePapel;
   /**  Sem modelo, vale o `modelo_padrao` do papel (RN-07). */
