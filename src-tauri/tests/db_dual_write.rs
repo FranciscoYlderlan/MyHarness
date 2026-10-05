@@ -1,9 +1,12 @@
-//! Dual write (RN-31, ERR-51; AC-147): if one side fails, nothing is written on either side.
+//! Dual write (RN-31, ERR-51, ERR-54; AC-147, AC-155): if one side fails, nothing is written on
+//! either side; if the vault undo fails too, the note stays in the vault and the case is logged.
 
 use std::sync::{Arc, Mutex};
 
 use my_harness_lib::infra::db::Database;
-use my_harness_lib::infra::db::dual_write::{self, DualWriteError, VaultError, VaultSide};
+use my_harness_lib::infra::db::dual_write::{
+    self, DualWriteError, LogTarget, VaultError, VaultSide,
+};
 use sqlx::AssertSqlSafe;
 
 /// In-memory vault: `notes` holds what was written; `fail_write`/`fail_undo` force failures.
@@ -17,6 +20,10 @@ struct FakeVault {
 
 impl VaultSide for FakeVault {
     type Receipt = String;
+
+    fn note_name(&self) -> String {
+        self.note.clone()
+    }
 
     async fn write(&mut self) -> Result<String, VaultError> {
         if self.fail_write {
@@ -35,14 +42,31 @@ impl VaultSide for FakeVault {
     }
 }
 
+/// Database with the parents of a tarefa and of a log row: projeto 1, chat 1, plano 1 and the
+/// orchestrator run 1 (the run that asks for the write, where ERR-54 is logged).
 async fn open() -> (tempfile::TempDir, Database) {
     let dir = tempfile::tempdir().expect("temp dir");
     let db = Database::open(dir.path()).await.expect("open database");
+    for sql in [
+        "INSERT INTO projeto (id, nome) VALUES (1, 'MyHarness')",
+        "INSERT INTO chat (id, projeto, limite_tokens, status) VALUES (1, 1, 100000, 'ativo')",
+        "INSERT INTO plano_delegacao (id, chat, versao, status) VALUES (1, 1, 1, 'proposto')",
+        "INSERT INTO execucao (id, chat, papel, modelo, prompt_versao, status) VALUES (1, 1, 'orquestrador', 'opus', 1, 'rodando')",
+    ] {
+        sqlx::query(sql).execute(db.pool()).await.expect("seed");
+    }
     (dir, db)
 }
 
-const INSERT_TAREFA: &str = "INSERT INTO tarefa (faz, toca_em, paralelo, pronto_quando, prova, papel) \
-     VALUES ('Esquema', '[\"src-tauri/migrations/\"]', 0, 'testes passam', 'cargo test', 'funcionalidade')";
+fn log(db: &Database) -> LogTarget<'_> {
+    LogTarget {
+        pool: db.pool(),
+        execucao: 1,
+    }
+}
+
+const INSERT_TAREFA: &str = "INSERT INTO tarefa (plano, faz, toca_em, paralelo, pronto_quando, prova, papel) \
+     VALUES (1, 'Esquema', '[\"src-tauri/migrations/\"]', 0, 'testes passam', 'cargo test', 'funcionalidade')";
 
 async fn count(db: &Database, table: &str) -> i64 {
     let (n,): (i64,) = sqlx::query_as(AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
@@ -65,7 +89,7 @@ async fn both_sides_written() {
         .execute(&mut *tx)
         .await
         .expect("insert");
-    let receipt = dual_write::commit_with_vault(tx, &mut vault)
+    let receipt = dual_write::commit_with_vault(tx, &mut vault, log(&db))
         .await
         .expect("dual write");
 
@@ -88,7 +112,7 @@ async fn vault_failure_rolls_back_sqlite() {
         .execute(&mut *tx)
         .await
         .expect("insert");
-    let err = dual_write::commit_with_vault(tx, &mut vault)
+    let err = dual_write::commit_with_vault(tx, &mut vault, log(&db))
         .await
         .expect_err("must fail");
 
@@ -109,8 +133,8 @@ async fn sqlite_failure_never_touches_the_vault() {
     let mut tx = db.pool().begin().await.expect("begin");
     // `faz` empty breaks tarefa_faz_tamanho: the caller stops before the vault side.
     let err = sqlx::query(
-        "INSERT INTO tarefa (faz, toca_em, paralelo, pronto_quando, prova, papel) \
-         VALUES ('', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')",
+        "INSERT INTO tarefa (plano, faz, toca_em, paralelo, pronto_quando, prova, papel) \
+         VALUES (1, '', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')",
     )
     .execute(&mut *tx)
     .await
@@ -152,7 +176,7 @@ async fn commit_failure_undoes_the_vault() {
     };
 
     let tx = failing_commit(&db).await;
-    let err = dual_write::commit_with_vault(tx, &mut vault)
+    let err = dual_write::commit_with_vault(tx, &mut vault, log(&db))
         .await
         .expect_err("must fail");
 
@@ -171,25 +195,36 @@ async fn commit_and_undo_failure_is_reported() {
     };
 
     let tx = failing_commit(&db).await;
-    let err = dual_write::commit_with_vault(tx, &mut vault)
+    let err = dual_write::commit_with_vault(tx, &mut vault, log(&db))
         .await
         .expect_err("must fail");
 
-    assert!(matches!(err, DualWriteError::UndoFailed { .. }), "{err}");
+    assert!(
+        matches!(&err, DualWriteError::HalfUndone { note, log: None, .. } if note == "n"),
+        "{err}"
+    );
+    assert_eq!(err.id(), "ERR-54");
     assert_eq!(count(&db, "tarefa").await, 0);
     assert_eq!(
         *vault.notes.lock().unwrap(),
         ["n"],
-        "divergence the caller must log"
+        "note stays in the vault"
     );
+    assert_eq!(count(&db, "log").await, 1, "case logged (ENT-12)");
 }
 
 #[test]
 fn catalog_entry() {
-    assert_eq!(DualWriteError::ID, "ERR-51");
-    assert_eq!(DualWriteError::CODE, "GRAVACAO_DIVERGENTE");
+    assert_eq!(DualWriteError::ERR_51_ID, "ERR-51");
+    assert_eq!(DualWriteError::ERR_51_CODE, "GRAVACAO_DIVERGENTE");
     assert_eq!(
-        DualWriteError::MESSAGE,
+        DualWriteError::ERR_51_MESSAGE,
         "Não deu para gravar no banco e no cofre ao mesmo tempo; nada foi gravado."
+    );
+    assert_eq!(DualWriteError::ERR_54_ID, "ERR-54");
+    assert_eq!(DualWriteError::ERR_54_CODE, "GRAVACAO_DESFEITA_PELA_METADE");
+    assert_eq!(
+        DualWriteError::ERR_54_MESSAGE,
+        "A nota <nome> ficou no cofre, mas não no banco. Apague a nota ou grave de novo."
     );
 }
