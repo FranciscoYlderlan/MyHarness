@@ -1,4 +1,5 @@
-//! Infrastructure adapters: `db`, `github` (RF-03) and `secrets` (credential store) are implemented.
+//! Infrastructure adapters: `db`, `github` (RF-03), `mcp` (MCP client over HTTP), `obsidian` (RF-02)
+//! and `secrets` (credential store) are implemented.
 
 pub mod claude;
 pub mod db;
