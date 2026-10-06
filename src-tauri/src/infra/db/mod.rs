@@ -5,6 +5,16 @@
 //! (`Anexos/contrato/02-entidades.md`) and `0003_contract_links_and_history.sql` brings it to
 //! M-37 to M-39 (required links, `incompleta`, `concluído`, `comandos`) and refuses `OR REPLACE`
 //! on prompt versions and runs; [`dual_write`] writes the ones that also live in the vault.
+//!
+//! Two rules for databases made by earlier builds (no version is published yet):
+//! * a database from before `0003` is deleted and created again only when `0003` stops on a row
+//!   without a required link (SQLite NOT NULL failure while running `0003`); any other migration
+//!   failure (checksum, full disk, I/O, busy, dirty) is returned and the file is left as it is
+//!   (decision `geral-decisao-2026-11-23-banco-antigo-apagado`);
+//! * a database that applied `0003` before its comment was corrected keeps working: sqlx refuses a
+//!   migration whose text changed since it ran, so the stored checksum of that first text is
+//!   replaced by the current one before migrating. Only that exact old checksum is replaced; any
+//!   other mismatch still fails.
 
 pub mod dual_write;
 
@@ -13,7 +23,8 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use sqlx::migrate::Migrator;
+use sqlx::error::ErrorKind;
+use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
 /// File name of the database inside the app data directory.
@@ -32,7 +43,19 @@ pub enum DbError {
     Open(#[from] sqlx::Error),
     #[error("could not run migrations: {0}")]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("could not delete old database {path}: {source}")]
+    Delete {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
+
+/// Version of `0003_contract_links_and_history.sql`.
+const MIGRATION_0003: i64 = 3;
+
+/// SHA-384 (as SQLite `hex()`) of `0003_contract_links_and_history.sql` as first committed
+/// (`ff1343f`), before its comment on the `comandos` filter was corrected without changing the SQL.
+const MIGRATION_0003_FIRST_CHECKSUM: &str = "A5F352C69001C6813FA36252C642E3827134A0C7581035D03D6A24816B4E51FEFE3EB51D53B74DC22147CD2DB0EB081B";
 
 /// Handle to the app database, managed as Tauri state.
 #[derive(Debug, Clone)]
@@ -43,6 +66,9 @@ pub struct Database {
 
 impl Database {
     /// Opens (or creates) the database in `data_dir`, enables WAL and runs pending migrations.
+    ///
+    /// A database from before `0003` on which `0003` stops with a NOT NULL failure is deleted and
+    /// created again; every other migration error is returned with the database untouched.
     pub async fn open(data_dir: &Path) -> Result<Self, DbError> {
         std::fs::create_dir_all(data_dir).map_err(|source| DbError::CreateDir {
             path: data_dir.to_path_buf(),
@@ -50,20 +76,24 @@ impl Database {
         })?;
         let path = data_dir.join(DB_FILE_NAME);
 
-        let options = SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .foreign_keys(true);
+        let pool = connect(&path).await?;
+        let applied = last_applied_version(&pool).await?;
+        accept_first_checksum_of_0003(&pool).await?;
 
-        let pool = SqlitePoolOptions::new()
-            .max_connections(4)
-            .connect_with(options)
-            .await?;
-
-        MIGRATOR.run(&pool).await?;
-
-        Ok(Self { pool, path })
+        match MIGRATOR.run(&pool).await {
+            Ok(()) => Ok(Self { pool, path }),
+            Err(err) if applied.is_some_and(|v| v < MIGRATION_0003) && is_0003_not_null(&err) => {
+                pool.close().await;
+                delete_database_files(&path)?;
+                let pool = connect(&path).await?;
+                MIGRATOR.run(&pool).await?;
+                Ok(Self { pool, path })
+            }
+            Err(err) => {
+                pool.close().await;
+                Err(err.into())
+            }
+        }
     }
 
     pub fn pool(&self) -> &SqlitePool {
@@ -77,4 +107,83 @@ impl Database {
     pub async fn close(&self) {
         self.pool.close().await;
     }
+}
+
+async fn connect(path: &Path) -> Result<SqlitePool, sqlx::Error> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+
+    SqlitePoolOptions::new()
+        .max_connections(4)
+        .connect_with(options)
+        .await
+}
+
+/// Highest migration applied with success, or `None` for a database without migrations.
+async fn last_applied_version(pool: &SqlitePool) -> Result<Option<i64>, sqlx::Error> {
+    if !has_migrations_table(pool).await? {
+        return Ok(None);
+    }
+    let (version,): (Option<i64>,) =
+        sqlx::query_as("SELECT MAX(version) FROM _sqlx_migrations WHERE success = 1")
+            .fetch_one(pool)
+            .await?;
+    Ok(version)
+}
+
+async fn has_migrations_table(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+/// Replaces the checksum of `0003` as first committed by the checksum of its current text.
+async fn accept_first_checksum_of_0003(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    if !has_migrations_table(pool).await? {
+        return Ok(());
+    }
+    let Some(current) = MIGRATOR
+        .iter()
+        .find(|m| m.version == MIGRATION_0003 && !m.migration_type.is_down_migration())
+    else {
+        return Ok(());
+    };
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ? AND hex(checksum) = ?")
+        .bind(current.checksum.as_ref())
+        .bind(MIGRATION_0003)
+        .bind(MIGRATION_0003_FIRST_CHECKSUM)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// `0003` failed while running because a row lacks a required link (SQLite NOT NULL).
+fn is_0003_not_null(err: &MigrateError) -> bool {
+    matches!(
+        err,
+        MigrateError::ExecuteMigration(sqlx::Error::Database(db), MIGRATION_0003)
+            if db.kind() == ErrorKind::NotNullViolation
+    )
+}
+
+/// Deletes the database file and its WAL companions; missing files are fine.
+fn delete_database_files(path: &Path) -> Result<(), DbError> {
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    let mut shm = path.as_os_str().to_owned();
+    shm.push("-shm");
+    for file in [path.to_path_buf(), PathBuf::from(wal), PathBuf::from(shm)] {
+        match std::fs::remove_file(&file) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(DbError::Delete { path: file, source }),
+        }
+    }
+    Ok(())
 }

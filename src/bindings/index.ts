@@ -242,7 +242,7 @@ export type ChatMudou = {
   avisos: ErroCatalogo[];
 };
 
-/**  Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-54). */
+/**  Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-55). */
 export type CodigoErro =
   | "CLAUDE_CLI_NAO_INSTALADO"
   | "GITHUB_OAUTH_NAO_CONCLUIDO"
@@ -297,7 +297,8 @@ export type CodigoErro =
   | "GRAVACAO_DIVERGENTE"
   | "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO"
   | "INTEGRACAO_FALHA_INESPERADA"
-  | "GRAVACAO_DESFEITA_PELA_METADE";
+  | "GRAVACAO_DESFEITA_PELA_METADE"
+  | "FALHA_INTERNA";
 
 /**  ENT-02 Cofre. */
 export type Cofre = {
@@ -372,8 +373,9 @@ export type ErroCatalogo = {
 };
 
 /**
- *  Erro de um comando. `catalogo` é a regra (o código diz o quê); `interno` é falha que
- *  o catálogo não cobre (ex.: o corpo provisório de um comando ainda sem núcleo).
+ *  Erro de um comando. `catalogo` é a regra (o código diz o quê); falha inesperada do
+ *  núcleo é o ERR-55 `FALHA_INTERNA` ([`ErroIpc::falha_interna`]). `interno` só resta no
+ *  corpo provisório dos comandos ainda sem núcleo, até a T4 do integracoes-plano.
  */
 export type ErroIpc =
   { tipo: "catalogo"; erro: ErroCatalogo } | { tipo: "interno"; motivo: MotivoInterno };
@@ -398,7 +400,7 @@ export type EventoExecucao =
   /**  Erro do catálogo durante a execução (ex.: ERR-17, ERR-08). */
   | { tipo: "erro"; erro: ErroCatalogo };
 
-/**  ENT-07 Execução (o que a tela mostra; a lista de comandos vai pelo Log, ENT-12). */
+/**  ENT-07 Execução (o que a tela de execução mostra, inclusive os comandos). */
 export type Execucao = {
   id: ExecucaoId;
   chat: ChatId;
@@ -413,6 +415,11 @@ export type Execucao = {
   status: StatusExecucao;
   /**  Só quando `status = na_fila`. */
   motivo_fila: MotivoFila | null;
+  /**
+   *  Comandos executados pelo agente, mascarados (RN-04); push, merge e push --force
+   *  nunca entram, porque o núcleo os nega antes (RN-17, ERR-14).
+   */
+  comandos: string[];
 };
 
 /**  Id de uma Execução (ENT-07). */
