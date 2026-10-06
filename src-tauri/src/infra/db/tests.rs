@@ -892,6 +892,91 @@ async fn open_still_refuses_any_other_checksum_of_0003_and_keeps_the_database() 
     pool.close().await;
 }
 
+/// A 0002 database whose stored checksum of 0001 or 0002 is wrong is not deleted: only `0003`
+/// stopping on NOT NULL deletes (decision `geral-decisao-2026-11-23-banco-antigo-apagado`).
+#[tokio::test]
+async fn open_keeps_a_0002_database_with_a_wrong_checksum_of_0001_or_0002() {
+    for version in [1_i64, 2] {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let old = old_database(dir.path()).await;
+        for sql in [
+            "INSERT INTO projeto (id, nome) VALUES (1, 'MyHarness')",
+            "INSERT INTO tarefa (id, faz, paralelo, pronto_quando, prova, papel) VALUES (1, 'f', 0, 'x', 'y', 'teste')",
+        ] {
+            ok(&old, sql).await;
+        }
+        ok(
+            &old,
+            &format!("UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = {version}"),
+        )
+        .await;
+        old.close().await;
+
+        let err = Database::open(dir.path())
+            .await
+            .expect_err("wrong checksum is an error");
+        assert!(
+            matches!(
+                err,
+                super::DbError::Migrate(sqlx::migrate::MigrateError::VersionMismatch(v)) if v == version
+            ),
+            "migration {version}: {err}"
+        );
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new().filename(dir.path().join(super::DB_FILE_NAME)),
+            )
+            .await
+            .expect("raw pool");
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM projeto").await,
+            1,
+            "data kept ({version})"
+        );
+        assert_eq!(
+            count(&pool, "SELECT COUNT(*) FROM tarefa").await,
+            1,
+            "data kept ({version})"
+        );
+        assert_eq!(
+            count(&pool, "SELECT MAX(version) FROM _sqlx_migrations").await,
+            2,
+            "still on 0002 ({version})"
+        );
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT COUNT(*) FROM _sqlx_migrations WHERE checksum = x'00'"
+            )
+            .await,
+            1,
+            "tampered checksum untouched ({version})"
+        );
+        pool.close().await;
+    }
+}
+
+/// A database file that cannot be removed comes back as `DbError::Delete` with its path.
+#[test]
+fn delete_failure_is_db_error_delete() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(super::DB_FILE_NAME);
+    std::fs::write(&path, b"old").expect("db file");
+    // A non-empty directory where the WAL file goes: `remove_file` fails on it.
+    let wal = dir.path().join(format!("{}-wal", super::DB_FILE_NAME));
+    std::fs::create_dir(&wal).expect("wal dir");
+    std::fs::write(wal.join("x"), b"x").expect("wal dir content");
+
+    let err = super::delete_database_files(&path).expect_err("cannot remove a directory");
+    match err {
+        super::DbError::Delete { path: failed, .. } => assert_eq!(failed, wal),
+        other => panic!("expected DbError::Delete, got {other}"),
+    }
+    assert!(!path.exists(), "the database file itself was removed first");
+}
+
 // ---------------------------------------------------------------------------------------------
 // M-40 / AC-155: ERR-54 when the SQLite commit and the vault undo both fail.
 
