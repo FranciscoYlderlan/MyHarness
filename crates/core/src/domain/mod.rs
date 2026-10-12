@@ -1,4 +1,4 @@
-//! Domain layer: entities and rules from `docs/contrato/02-entidades.md`. Empty for now.
+//! Domain layer: entities and rules from the functional contract (`02-entidades.md`, kept in the project vault until final acceptance). Empty for now.
 
 #[cfg(test)]
 mod tests {
