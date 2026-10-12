@@ -97,11 +97,25 @@ async fn ler_login(r: reqwest::Response, segredos: &[&Segredo]) -> Result<CorpoL
     let texto = r.text().await.map_err(|e| rede(e, segredos))?;
     match serde_json::from_str::<CorpoLogin>(&texto) {
         Ok(corpo) if status.is_success() || corpo.error.is_some() => Ok(corpo),
-        _ => Err(resposta(
-            &format!("HTTP {}: {}", status.as_u16(), resumo(&texto)),
-            segredos,
-        )),
+        _ => {
+            // O corpo recusado pode trazer um `access_token` sem prefixo conhecido: ele
+            // também sai da mensagem (RN-04).
+            let lido = token_do_corpo(&texto);
+            let mut todos = segredos.to_vec();
+            todos.extend(lido.as_ref());
+            Err(resposta(
+                &format!("HTTP {}: {}", status.as_u16(), resumo(&texto)),
+                &todos,
+            ))
+        }
     }
+}
+
+/// O `access_token` de um corpo JSON, se houver.
+fn token_do_corpo(texto: &str) -> Option<Segredo> {
+    let valor = serde_json::from_str::<serde_json::Value>(texto).ok()?;
+    let token = valor.get("access_token")?.as_str()?;
+    (!token.is_empty()).then(|| Segredo::new(token))
 }
 
 /// Até 200 caracteres do corpo, para o motivo do erro.
@@ -431,6 +445,28 @@ mod tests {
         assert!(matches!(erro, ErroHost::Resposta(_)), "{saida}");
         assert!(!saida.contains("T0k3n"), "{saida}");
         assert!(saida.contains("HTTP 500"), "{saida}");
+    }
+
+    // Corpo recusado (HTTP 500) com um `access_token` sem prefixo: some do motivo.
+    #[tokio::test]
+    async fn corpo_recusado_com_access_token_sai_mascarado() {
+        let (base, _) = servidor(vec![(
+            500,
+            vec![],
+            r#"{"access_token":"semprefixoSEGREDO123"}"#.into(),
+        )])
+        .await;
+
+        let erro = cliente(&base)
+            .trocar_codigo("cid", &Segredo::new("dc-123"))
+            .await
+            .unwrap_err();
+
+        let saida = format!("{erro} {erro:?}");
+        assert!(matches!(erro, ErroHost::Resposta(_)), "{saida}");
+        assert!(saida.contains("HTTP 500"), "{saida}");
+        assert!(!saida.contains("SEGREDO123"), "{saida}");
+        assert!(saida.contains("••••"), "{saida}");
     }
 
     #[tokio::test]

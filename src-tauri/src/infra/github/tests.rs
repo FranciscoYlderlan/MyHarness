@@ -296,20 +296,24 @@ async fn ac_153_rede_fora_do_ar_e_err_53_e_volta_ao_conectar() {
     );
     assert!(mensagem.ends_with(". Tente de novo."), "{mensagem}");
     assert!(!mensagem.contains(TOKEN), "{mensagem}");
-    // Pelo trait: o estado final do ERR-53.
+    // Pelo trait: o mesmo ERR-53, com o motivo; o estado final é desconectado.
     let integracao: &dyn Integracao = c.github.as_ref();
+    let pelo_trait = integracao.verificar().await.unwrap_err();
+    assert_eq!(pelo_trait.id(), "ERR-53");
+    assert_eq!(pelo_trait.to_string(), mensagem);
     assert_eq!(
-        integracao.verificar().await.unwrap().status,
-        StatusIntegracao::Desconectado
+        pelo_trait.status_resultante(),
+        Some(StatusIntegracao::Desconectado)
     );
     assert_eq!(
         integracao
             .conectar(&Observador::default())
             .await
-            .unwrap()
-            .status,
-        StatusIntegracao::Desconectado
+            .unwrap_err()
+            .id(),
+        "ERR-53"
     );
+    assert_eq!(integracao.segredos_guardados(), [Segredo::new(TOKEN)]);
 
     c.falso.fora_do_ar(false);
     let observador = Observador::default();
@@ -406,6 +410,71 @@ async fn cofre_falhando_ao_guardar_e_err_53() {
     assert!(!erro.to_string().contains(TOKEN), "{erro}");
     cofre.quebrar(None);
     assert_eq!(c.token_no_cofre(), None);
+}
+
+/// Host que chama "Desconectar" durante a leitura da conta do token novo.
+#[derive(Debug)]
+struct HostQueDesconecta {
+    falso: Arc<GitHubFalso>,
+    github: std::sync::OnceLock<std::sync::Weak<GitHub>>,
+}
+
+#[async_trait::async_trait]
+impl GitHost for HostQueDesconecta {
+    async fn pedir_codigo(
+        &self,
+        client_id: &str,
+        escopos: &[String],
+    ) -> Result<host::CodigoDispositivo, host::ErroHost> {
+        self.falso.pedir_codigo(client_id, escopos).await
+    }
+
+    async fn trocar_codigo(
+        &self,
+        client_id: &str,
+        device_code: &Segredo,
+    ) -> Result<RespostaToken, host::ErroHost> {
+        self.falso.trocar_codigo(client_id, device_code).await
+    }
+
+    async fn usuario(&self, token: &Segredo) -> Result<host::UsuarioGitHub, host::ErroHost> {
+        if let Some(github) = self.github.get().and_then(std::sync::Weak::upgrade) {
+            github.remover().unwrap();
+        }
+        self.falso.usuario(token).await
+    }
+}
+
+// "Desconectar" durante a última chamada `usuario()` do device flow: o token concedido
+// não é gravado e a conexão termina como cancelada (ERR-02).
+#[tokio::test(start_paused = true)]
+async fn desconectar_durante_a_leitura_da_conta_nao_grava_o_token() {
+    let falso = Arc::new(GitHubFalso::novo());
+    falso.autorizar(&Segredo::new(TOKEN), "octocat", &["repo"]);
+    let host = Arc::new(HostQueDesconecta {
+        falso,
+        github: std::sync::OnceLock::new(),
+    });
+    let cofre = Arc::new(CofreEmMemoria::novo());
+    let github = Arc::new(GitHub::new(
+        ConfigGitHub::nova(CLIENT_ID),
+        host.clone(),
+        cofre.clone(),
+    ));
+    host.github.set(Arc::downgrade(&github)).unwrap();
+
+    let erro = github
+        .conectar_com(&Observador::default())
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        erro,
+        ErroGitHub::Catalogo(ErroIntegracao::GithubOauthNaoConcluido(
+            MotivoOauthNaoConcluido::Cancelado
+        ))
+    );
+    assert_eq!(cofre.ler(&ChaveCredencial::github()).unwrap(), None);
 }
 
 // Desconectar apaga o token do cofre.

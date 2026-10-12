@@ -1,21 +1,28 @@
-//! A interface que os comandos chamam ([`Nucleo`]) e o corpo provisório dela
-//! ([`NucleoProvisorio`]), sem banco e sem regra de negócio.
+//! A interface que os comandos chamam ([`Nucleo`]) e o corpo dela ([`NucleoMyHarness`]).
 //!
 //! Os comandos não sabem quem implementa o núcleo: o app guarda um `Arc<dyn Nucleo>`
-//! como estado do Tauri. As etapas seguintes trocam o provisório pelo núcleo de verdade
-//! (casos de uso de `my-harness-core` + `infra/`) sem mudar o contrato.
+//! como estado do Tauri. As integrações (UC-01) já são reais ([`ServicoIntegracoes`]);
+//! o resto ainda é provisório: listas vazias, consumo indisponível (ERR-41) e ERR-55
+//! `FALHA_INTERNA` ("ainda não implementado") em toda escrita. Nada é inventado.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use my_harness_core::application::integracao::{
+    InstrucaoConexao as InstrucaoCore, ObservadorConexao,
+};
+use my_harness_core::domain::integracao::TipoIntegracao as TipoCore;
+use my_harness_core::domain::segredo::TextoMascarado;
 use tauri::ipc::Channel;
 
 use super::dto::*;
-use super::erro::{CodigoErro, ComAvisos, ErroIpc, MotivoInterno};
+use super::erro::{CodigoErro, ComAvisos, ErroIpc};
 use super::eventos::EventoExecucao;
+use super::integracoes::{EntradaRegistro, RegistroNucleo, ServicoIntegracoes};
 
 /// Resultado de todo comando.
 pub type Resultado<T> = Result<T, ErroIpc>;
 
-/// Operações que a tela pede ao núcleo (uma por comando do contrato IPC).
 #[async_trait]
 pub trait Nucleo: Send + Sync {
     // Integrações (ENT-13; UC-01; CMP-03, CMP-11)
@@ -125,46 +132,87 @@ pub trait Nucleo: Send + Sync {
     async fn listar_logs(&self, chat: ChatId) -> Resultado<Vec<Log>>;
 }
 
-/// Corpo provisório: listas vazias, integrações sem verificação (`desconectado`),
-/// consumo indisponível (ERR-41) e `nao_implementado` em toda escrita. Nada é inventado.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NucleoProvisorio;
-
-fn nao_implementado<T>() -> Resultado<T> {
-    Err(ErroIpc::Interno {
-        motivo: MotivoInterno::NaoImplementado,
-    })
+/// O núcleo do app: integrações reais e o resto provisório.
+pub struct NucleoMyHarness {
+    integracoes: ServicoIntegracoes,
+    registro: Arc<dyn RegistroNucleo>,
 }
 
-fn nao_verificada(tipo: TipoIntegracao) -> Integracao {
-    Integracao {
-        tipo,
-        status: StatusIntegracao::Desconectado,
-        conta: None,
-        versao: None,
+impl std::fmt::Debug for NucleoMyHarness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NucleoMyHarness")
+            .field("integracoes", &self.integracoes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NucleoMyHarness {
+    /// Núcleo com as `integracoes`; ERR-55 vai ao `registro`, como o ERR-53 do serviço.
+    pub fn new(integracoes: ServicoIntegracoes, registro: Arc<dyn RegistroNucleo>) -> Self {
+        Self {
+            integracoes,
+            registro,
+        }
+    }
+
+    /// O serviço das integrações.
+    pub fn integracoes(&self) -> &ServicoIntegracoes {
+        &self.integracoes
+    }
+
+    /// ERR-55 de um comando que existe no contrato e o núcleo ainda não implementa,
+    /// com o caso registrado.
+    fn nao_implementado<T>(&self, comando: &str) -> Resultado<T> {
+        let motivo =
+            TextoMascarado::new(&format!("o comando {comando} ainda não foi implementado"));
+        self.registro.registrar(EntradaRegistro {
+            codigo: CodigoErro::FalhaInterna,
+            comando: comando.to_owned(),
+            motivo: motivo.clone(),
+        });
+        Err(ErroIpc::falha_interna(&motivo))
+    }
+}
+
+/// Manda as instruções da conexão pelo canal do comando `conectar_integracao`.
+struct ObservadorCanal(Channel<InstrucaoConexao>);
+
+impl ObservadorConexao for ObservadorCanal {
+    fn instrucao(&self, instrucao: InstrucaoCore) {
+        // Tela fechada no meio da conexão: a conexão segue; a instrução se perde.
+        let _ = self.0.send(instrucao.into());
     }
 }
 
 #[async_trait]
-impl Nucleo for NucleoProvisorio {
+impl Nucleo for NucleoMyHarness {
     async fn listar_integracoes(&self) -> Resultado<Vec<Integracao>> {
-        Ok(my_harness_core::domain::integracao::TipoIntegracao::TODAS
+        Ok(self
+            .integracoes
+            .listar()
+            .await
             .into_iter()
-            .map(|t| nao_verificada(t.into()))
+            .map(Into::into)
             .collect())
     }
     async fn testar_integracao(&self, tipo: TipoIntegracao) -> Resultado<Integracao> {
-        Ok(nao_verificada(tipo))
+        self.integracoes.testar(tipo.into()).await.map(Into::into)
     }
     async fn conectar_integracao(
         &self,
-        _tipo: TipoIntegracao,
-        _instrucoes: Channel<InstrucaoConexao>,
+        tipo: TipoIntegracao,
+        instrucoes: Channel<InstrucaoConexao>,
     ) -> Resultado<Integracao> {
-        nao_implementado()
+        self.integracoes
+            .conectar(tipo.into(), Arc::new(ObservadorCanal(instrucoes)))
+            .await
+            .map(Into::into)
     }
-    async fn desconectar_integracao(&self, _tipo: TipoIntegracao) -> Resultado<Integracao> {
-        nao_implementado()
+    async fn desconectar_integracao(&self, tipo: TipoIntegracao) -> Resultado<Integracao> {
+        self.integracoes
+            .desconectar(tipo.into())
+            .await
+            .map(Into::into)
     }
 
     async fn ler_consumo(&self) -> Resultado<Consumo> {
@@ -175,24 +223,24 @@ impl Nucleo for NucleoProvisorio {
         Ok(Vec::new())
     }
     async fn criar_projeto(&self, _novo: NovoProjeto) -> Resultado<ComAvisos<Projeto>> {
-        nao_implementado()
+        self.nao_implementado("criar_projeto")
     }
     async fn listar_chats(&self, _projeto: ProjetoId) -> Resultado<Vec<Chat>> {
         Ok(Vec::new())
     }
     async fn abrir_chat(&self, _chat: ChatId) -> Resultado<ChatAberto> {
-        nao_implementado()
+        self.nao_implementado("abrir_chat")
     }
 
     async fn novo_chat(&self, _projeto: ProjetoId) -> Resultado<Chat> {
-        nao_implementado()
+        self.nao_implementado("novo_chat")
     }
     async fn definir_limite_chat(
         &self,
         _chat: ChatId,
         _limite_tokens: u32,
     ) -> Resultado<ComAvisos<Chat>> {
-        nao_implementado()
+        self.nao_implementado("definir_limite_chat")
     }
     async fn enviar_prompt(
         &self,
@@ -201,13 +249,15 @@ impl Nucleo for NucleoProvisorio {
         _modelo: Option<String>,
         _saida: Channel<EventoExecucao>,
     ) -> Resultado<Execucao> {
-        nao_implementado()
+        // RN-08 (UC-02 FE-01): sem o Claude CLI conectado, nada é enviado (ERR-05).
+        self.integracoes.exigir(TipoCore::ClaudeCli).await?;
+        self.nao_implementado("enviar_prompt")
     }
     async fn aceitar_passagem(&self, _chat: ChatId) -> Resultado<Chat> {
-        nao_implementado()
+        self.nao_implementado("aceitar_passagem")
     }
     async fn continuar_no_chat(&self, _chat: ChatId) -> Resultado<Chat> {
-        nao_implementado()
+        self.nao_implementado("continuar_no_chat")
     }
 
     async fn listar_execucoes(&self, _chat: ChatId) -> Resultado<Vec<Execucao>> {
@@ -218,27 +268,27 @@ impl Nucleo for NucleoProvisorio {
         _execucao: ExecucaoId,
         _saida: Channel<EventoExecucao>,
     ) -> Resultado<()> {
-        nao_implementado()
+        self.nao_implementado("acompanhar_execucao")
     }
 
     async fn ler_plano(&self, _plano: PlanoId) -> Resultado<PlanoDelegacao> {
-        nao_implementado()
+        self.nao_implementado("ler_plano")
     }
     async fn trocar_modelo_tarefa(&self, _tarefa: TarefaId, _modelo: String) -> Resultado<Tarefa> {
-        nao_implementado()
+        self.nao_implementado("trocar_modelo_tarefa")
     }
     async fn aprovar_plano(&self, _plano: PlanoId) -> Resultado<PlanoDelegacao> {
-        nao_implementado()
+        self.nao_implementado("aprovar_plano")
     }
     async fn pedir_alteracao_plano(
         &self,
         _plano: PlanoId,
         _comentario: String,
     ) -> Resultado<PlanoDelegacao> {
-        nao_implementado()
+        self.nao_implementado("pedir_alteracao_plano")
     }
     async fn recusar_plano(&self, _plano: PlanoId) -> Resultado<PlanoDelegacao> {
-        nao_implementado()
+        self.nao_implementado("recusar_plano")
     }
 
     async fn listar_papeis(&self) -> Resultado<Vec<Papel>> {
@@ -248,10 +298,10 @@ impl Nucleo for NucleoProvisorio {
         Ok(Vec::new())
     }
     async fn salvar_modelos_padrao(&self, _papeis: Vec<Papel>) -> Resultado<Vec<Papel>> {
-        nao_implementado()
+        self.nao_implementado("salvar_modelos_padrao")
     }
     async fn restaurar_modelos_padrao(&self) -> Resultado<Vec<Papel>> {
-        nao_implementado()
+        self.nao_implementado("restaurar_modelos_padrao")
     }
 
     async fn listar_achados(&self, _chat: ChatId) -> Resultado<Vec<Achado>> {
@@ -262,10 +312,10 @@ impl Nucleo for NucleoProvisorio {
         _achado: AchadoId,
         _decisao: DecisaoAchado,
     ) -> Resultado<Achado> {
-        nao_implementado()
+        self.nao_implementado("decidir_achado")
     }
     async fn confirmar_decisoes(&self, _chat: ChatId) -> Resultado<()> {
-        nao_implementado()
+        self.nao_implementado("confirmar_decisoes")
     }
 
     async fn listar_prompts_papel(&self) -> Resultado<Vec<PromptPapel>> {
@@ -279,10 +329,10 @@ impl Nucleo for NucleoProvisorio {
         _fluxo: FluxoPrompt,
         _texto: String,
     ) -> Resultado<PromptPapel> {
-        nao_implementado()
+        self.nao_implementado("salvar_prompt_papel")
     }
     async fn restaurar_prompt_padrao(&self, _fluxo: FluxoPrompt) -> Resultado<PromptPapel> {
-        nao_implementado()
+        self.nao_implementado("restaurar_prompt_padrao")
     }
 
     async fn listar_cofres(&self, _projeto: ProjetoId) -> Resultado<Vec<Cofre>> {
@@ -297,20 +347,23 @@ impl Nucleo for NucleoProvisorio {
         _nome: String,
         _funcao: FuncaoCofre,
     ) -> Resultado<Cofre> {
-        nao_implementado()
+        // RN-08 (UC-14): ligar um cofre testa uma busca pela Obsidian CLI (ERR-07).
+        self.integracoes.exigir(TipoCore::ObsidianCli).await?;
+        self.nao_implementado("ligar_cofre")
     }
     async fn definir_funcao_cofre(
         &self,
         _cofre: CofreId,
         _funcao: FuncaoCofre,
     ) -> Resultado<Vec<Cofre>> {
-        nao_implementado()
+        self.nao_implementado("definir_funcao_cofre")
     }
     async fn definir_cofre_ativo(&self, _cofre: CofreId, _ativo: bool) -> Resultado<Cofre> {
-        nao_implementado()
+        self.nao_implementado("definir_cofre_ativo")
     }
     async fn testar_cofre(&self, _cofre: CofreId) -> Resultado<Cofre> {
-        nao_implementado()
+        self.integracoes.exigir(TipoCore::ObsidianCli).await?;
+        self.nao_implementado("testar_cofre")
     }
 
     async fn listar_leituras(&self, _chat: ChatId) -> Resultado<Vec<Leitura>> {
@@ -324,10 +377,10 @@ impl Nucleo for NucleoProvisorio {
         _projeto: ProjetoId,
         _caminho: String,
     ) -> Resultado<PastaContexto> {
-        nao_implementado()
+        self.nao_implementado("adicionar_pasta_contexto")
     }
     async fn remover_pasta_contexto(&self, _pasta: PastaContextoId) -> Resultado<()> {
-        nao_implementado()
+        self.nao_implementado("remover_pasta_contexto")
     }
 
     async fn listar_logs(&self, _chat: ChatId) -> Resultado<Vec<Log>> {
@@ -336,46 +389,4 @@ impl Nucleo for NucleoProvisorio {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::commands::erro::ErroCatalogo;
-
-    #[tokio::test]
-    async fn provisorio_nao_inventa_dados() {
-        let n: std::sync::Arc<dyn Nucleo> = std::sync::Arc::new(NucleoProvisorio);
-        let integracoes = n.listar_integracoes().await.unwrap();
-        assert_eq!(
-            integracoes.iter().map(|i| i.tipo).collect::<Vec<_>>(),
-            [
-                TipoIntegracao::ClaudeCli,
-                TipoIntegracao::ObsidianCli,
-                TipoIntegracao::GitHub
-            ]
-        );
-        assert!(
-            integracoes
-                .iter()
-                .all(|i| i.status == StatusIntegracao::Desconectado)
-        );
-        assert_eq!(
-            n.ler_consumo().await.unwrap_err(),
-            ErroIpc::Catalogo {
-                erro: ErroCatalogo::new(CodigoErro::ConsumoIndisponivel)
-            }
-        );
-        assert!(n.listar_projetos().await.unwrap().is_empty());
-        let nao_implementado = ErroIpc::Interno {
-            motivo: MotivoInterno::NaoImplementado,
-        };
-        assert_eq!(
-            n.aprovar_plano(PlanoId("p1".into())).await.unwrap_err(),
-            nao_implementado
-        );
-        assert_eq!(
-            n.desconectar_integracao(TipoIntegracao::GitHub)
-                .await
-                .unwrap_err(),
-            nao_implementado
-        );
-    }
-}
+mod tests;
