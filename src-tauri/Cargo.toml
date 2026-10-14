@@ -26,6 +26,10 @@ specta = { workspace = true }
 specta-typescript = { workspace = true }
 tauri-specta = { workspace = true }
 
+# Matar a árvore de processos no tempo esgotado (infra/process): `kill` do grupo, sem `unsafe`.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["process"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
