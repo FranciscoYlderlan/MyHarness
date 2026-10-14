@@ -31,6 +31,10 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # Cofre de credenciais do SO (RNF-05, D12): Gerenciador de Credenciais no Windows.
 keyring = "4.2"
 
+# Matar a árvore de processos no tempo esgotado (infra/process): `kill` do grupo, sem `unsafe`.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["process"] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["time", "test-util", "net", "io-util"] }

@@ -296,7 +296,75 @@ async fn err_04_login_sem_resposta_no_tempo() {
     );
 }
 
+/// Prova da correção (achado do verificador): o login roda num shell que deixa um neto
+/// (`sleep 47`); no tempo esgotado, ERR-04 e nenhum processo da árvore sobra.
+#[cfg(unix)]
+#[tokio::test]
+async fn err_04_tempo_esgotado_mata_o_login_e_os_netos() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::infra::process::sonda::morre;
+
+    let pasta = tempfile::tempdir().unwrap();
+    let pids = pasta.path().join("pids");
+    let executavel = pasta.path().join("claude");
+    let script = format!(
+        r#"#!/bin/sh
+case "$1 $2" in
+  "--version ") echo "2.1.0 (Claude Code)" ;;
+  "auth status") echo '{{"loggedIn": false}}'; exit 1 ;;
+  "auth login")
+    echo "https://claude.ai/oauth/authorize?x"
+    echo $$ >> "{pids}"
+    sleep 47 &
+    echo $! >> "{pids}"
+    wait ;;
+esac
+"#,
+        pids = pids.display()
+    );
+    std::fs::write(&executavel, script).unwrap();
+    std::fs::set_permissions(&executavel, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut cfg = config(Some(executavel));
+    cfg.tempo_login = Duration::from_millis(800);
+
+    let inicio = std::time::Instant::now();
+    let erro = ClaudeCli::new(cfg)
+        .fazer_login(&Gravador::default())
+        .await
+        .unwrap_err();
+    let decorrido = inicio.elapsed();
+
+    assert_eq!(erro.id(), "ERR-04");
+    assert_eq!(erro.to_string(), "tempo esgotado esperando o login");
+    assert!(decorrido < Duration::from_secs(3), "{decorrido:?}");
+    let pids: Vec<i32> = std::fs::read_to_string(&pids)
+        .unwrap()
+        .lines()
+        .map(|l| l.trim().parse().unwrap())
+        .collect();
+    assert_eq!(pids.len(), 2, "shell e sleep: {pids:?}");
+    for pid in pids {
+        assert!(morre(pid).await, "processo {pid} da árvore do login sobrou");
+    }
+    eprintln!("ERR-04 em {decorrido:?}; árvore do login encerrada");
+}
+
 // ---------- AC-154 / RN-04: mensagem da CLI mascarada ----------
+
+#[tokio::test]
+async fn ac_154_conta_da_cli_sai_mascarada() {
+    let cli = CliFalsa::nova(json!({
+        "logado": true,
+        "email": format!("{TOKEN}@exemplo.com")
+    }));
+
+    let estado = cli.claude().checar().await.unwrap();
+
+    let conta = estado.conta.unwrap();
+    assert!(!conta.contains("A1b2C3d4"), "{conta}");
+    assert_eq!(conta, format!("{MASCARA}@exemplo.com"));
+}
 
 #[tokio::test]
 async fn ac_154_mensagem_de_erro_do_login_sai_com_o_token_mascarado() {
