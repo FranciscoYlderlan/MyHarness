@@ -170,9 +170,28 @@ pub enum ErroIntegracao {
     /// ERR-07: ação que depende da Obsidian CLI com ela desconectada (RN-08).
     #[error("Conecte o Obsidian para registrar")]
     ObsidianDesconectado,
+    /// ERR-53: erro genérico das integrações (UC-01 FE-04): qualquer falha ao checar,
+    /// conectar ou desconectar que não tem ERR próprio (tempo esgotado, saída ilegível,
+    /// rede, cofre não encontrado pela Obsidian CLI). O motivo já vem mascarado (RN-04)
+    /// e vai à mensagem e ao Log (ENT-12).
+    #[error("Falha inesperada com {integracao}: {motivo}. Tente de novo.")]
+    FalhaInesperada {
+        /// Integração em que a falha aconteceu.
+        integracao: TipoIntegracao,
+        /// Motivo real, mascarado.
+        motivo: TextoMascarado,
+    },
 }
 
 impl ErroIntegracao {
+    /// ERR-53 de `integracao` com o `motivo` mascarado (RN-04).
+    pub fn inesperada(integracao: TipoIntegracao, motivo: impl Into<TextoMascarado>) -> Self {
+        ErroIntegracao::FalhaInesperada {
+            integracao,
+            motivo: motivo.into(),
+        }
+    }
+
     /// ID do item no catálogo de erros (ex.: `"ERR-01"`).
     pub fn id(&self) -> &'static str {
         match self {
@@ -183,6 +202,7 @@ impl ErroIntegracao {
             ErroIntegracao::ClaudeCliDesconectado => "ERR-05",
             ErroIntegracao::GithubDesconectado => "ERR-06",
             ErroIntegracao::ObsidianDesconectado => "ERR-07",
+            ErroIntegracao::FalhaInesperada { .. } => "ERR-53",
         }
     }
 
@@ -196,6 +216,7 @@ impl ErroIntegracao {
             ErroIntegracao::ClaudeCliDesconectado => "CLAUDE_CLI_DESCONECTADO",
             ErroIntegracao::GithubDesconectado => "GITHUB_DESCONECTADO",
             ErroIntegracao::ObsidianDesconectado => "OBSIDIAN_DESCONECTADO",
+            ErroIntegracao::FalhaInesperada { .. } => "INTEGRACAO_FALHA_INESPERADA",
         }
     }
 
@@ -211,6 +232,7 @@ impl ErroIntegracao {
             ErroIntegracao::ObsidianFechado { .. } | ErroIntegracao::ObsidianDesconectado => {
                 TipoIntegracao::ObsidianCli
             }
+            ErroIntegracao::FalhaInesperada { integracao, .. } => *integracao,
         }
     }
 
@@ -219,9 +241,9 @@ impl ErroIntegracao {
     pub fn status_resultante(&self) -> Option<StatusIntegracao> {
         match self {
             ErroIntegracao::ClaudeCliNaoInstalado => Some(StatusIntegracao::NaoInstalado),
-            ErroIntegracao::GithubOauthNaoConcluido(_) | ErroIntegracao::ObsidianFechado { .. } => {
-                Some(StatusIntegracao::Desconectado)
-            }
+            ErroIntegracao::GithubOauthNaoConcluido(_)
+            | ErroIntegracao::ObsidianFechado { .. }
+            | ErroIntegracao::FalhaInesperada { .. } => Some(StatusIntegracao::Desconectado),
             ErroIntegracao::LoginClaudeCliFalhou { .. } => Some(StatusIntegracao::SemLogin),
             ErroIntegracao::ClaudeCliDesconectado
             | ErroIntegracao::GithubDesconectado
@@ -264,6 +286,7 @@ mod tests {
             ErroIntegracao::ClaudeCliDesconectado,
             ErroIntegracao::GithubDesconectado,
             ErroIntegracao::ObsidianDesconectado,
+            ErroIntegracao::inesperada(TipoIntegracao::GitHub, "erro de rede"),
         ]
     }
 
@@ -305,6 +328,7 @@ mod tests {
                 ("ERR-05", "CLAUDE_CLI_DESCONECTADO"),
                 ("ERR-06", "GITHUB_DESCONECTADO"),
                 ("ERR-07", "OBSIDIAN_DESCONECTADO"),
+                ("ERR-53", "INTEGRACAO_FALHA_INESPERADA"),
             ]
         );
     }
@@ -331,6 +355,7 @@ mod tests {
                 (TipoIntegracao::ClaudeCli, None),
                 (TipoIntegracao::GitHub, None),
                 (TipoIntegracao::ObsidianCli, None),
+                (TipoIntegracao::GitHub, Some(StatusIntegracao::Desconectado)),
             ]
         );
     }
@@ -399,6 +424,10 @@ mod tests {
             ErroIntegracao::LoginClaudeCliFalhou {
                 motivo: format!("{token} recusado; de novo {}", token.to_uppercase()).into(),
             },
+            ErroIntegracao::inesperada(
+                TipoIntegracao::ObsidianCli,
+                format!("tempo esgotado com {token}"),
+            ),
         ];
         for erro in &erros {
             for saida in [erro.to_string(), format!("{erro:?}"), format!("{erro:#?}")] {
@@ -408,6 +437,10 @@ mod tests {
         }
         assert_eq!(erros[0].to_string(), "falhou com \"••••\" no vault");
         assert_eq!(erros[1].to_string(), "•••• recusado; de novo ••••");
+        assert_eq!(
+            erros[2].to_string(),
+            "Falha inesperada com Obsidian CLI: tempo esgotado com ••••. Tente de novo."
+        );
         assert_eq!(
             format!("{:?}", erros[1]),
             "LoginClaudeCliFalhou { motivo: \"•••• recusado; de novo ••••\" }"
