@@ -19,6 +19,8 @@ use my_harness_core::domain::integracao::{
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use super::erro::ErroCatalogo;
+
 // ---------------------------------------------------------------------------
 // Data e hora
 // ---------------------------------------------------------------------------
@@ -614,6 +616,11 @@ pub struct Integracao {
     pub status: StatusIntegracao,
     pub conta: Option<String>,
     pub versao: Option<String>,
+    /// Notas `.md` do cofre checado; só Obsidian CLI `conectado` (AC-128, M-46).
+    pub notas_indexadas: Option<u32>,
+    /// O ERR do catálogo que explica o status, quando ele vem de uma falha (M-46), com
+    /// os valores já mascarados (RN-04).
+    pub erro: Option<ErroCatalogo>,
 }
 
 /// Instrução para o Humano durante a conexão (UC-01 passo 2), pelo canal do comando.
@@ -664,6 +671,11 @@ impl From<EstadoIntegracao> for Integracao {
             status: e.status.into(),
             conta: e.conta,
             versao: e.versao,
+            // Acima de u32 não cabe na tela sem perder precisão; satura (cofre real: dezenas).
+            notas_indexadas: e
+                .notas_indexadas
+                .map(|n| u32::try_from(n).unwrap_or(u32::MAX)),
+            erro: e.erro.as_ref().map(ErroCatalogo::from),
         }
     }
 }
@@ -830,9 +842,44 @@ mod tests {
         let dto = Integracao::from(estado);
         assert_eq!(dto.tipo, TipoIntegracao::GitHub);
         assert_eq!(dto.status, StatusIntegracao::Conectado);
+        assert_eq!((dto.notas_indexadas, dto.erro), (None, None));
         for t in TipoIntegracaoCore::TODAS {
             assert_eq!(TipoIntegracaoCore::from(TipoIntegracao::from(t)), t);
         }
+    }
+
+    // M-46: o número de notas e o erro do catálogo chegam à tela pelo DTO.
+    #[test]
+    fn integracao_leva_notas_indexadas_e_erro() {
+        use my_harness_core::domain::integracao::ErroIntegracao;
+
+        let obsidian = EstadoIntegracao::conectado(TipoIntegracaoCore::ObsidianCli, None, None)
+            .com_notas_indexadas(Some(75));
+        let dto = Integracao::from(obsidian);
+        assert_eq!(dto.notas_indexadas, Some(75));
+        assert_eq!(dto.erro, None);
+
+        let falha = ErroIntegracao::inesperada(
+            TipoIntegracaoCore::GitHub,
+            "erro de rede com ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        );
+        let dto = Integracao::from(EstadoIntegracao::a_partir_do_erro(&falha));
+        assert_eq!(dto.status, StatusIntegracao::Desconectado);
+        let erro = dto.erro.expect("erro do catálogo");
+        assert_eq!(erro.id, "ERR-53");
+        assert_eq!(erro.parametros["integracao"], "GitHub");
+        assert_eq!(erro.parametros["motivo"], "erro de rede com ••••");
+        let json = serde_json::to_value(Integracao::from(EstadoIntegracao::a_partir_do_erro(
+            &ErroIntegracao::ClaudeCliNaoInstalado,
+        )))
+        .unwrap();
+        assert_eq!(json["status"], "nao_instalado");
+        assert_eq!(json["notas_indexadas"], serde_json::Value::Null);
+        assert_eq!(json["erro"]["codigo"], "CLAUDE_CLI_NAO_INSTALADO");
+
+        let muitas = EstadoIntegracao::conectado(TipoIntegracaoCore::ObsidianCli, None, None)
+            .com_notas_indexadas(Some(u64::MAX));
+        assert_eq!(Integracao::from(muitas).notas_indexadas, Some(u32::MAX));
     }
 
     mod erased {

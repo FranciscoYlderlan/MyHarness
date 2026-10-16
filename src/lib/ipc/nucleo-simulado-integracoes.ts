@@ -1,7 +1,6 @@
 // Núcleo simulado das integrações (modo simulado, só desenvolvimento e teste): responde
 // `listar_integracoes`, `testar_integracao`, `conectar_integracao` e `desconectar_integracao`
 // pelo mesmo contrato IPC dos bindings, sem Claude CLI, Obsidian nem GitHub.
-// Ponte até o núcleo real ligar as três integrações (T4 do integracoes-plano).
 import type {
   ErroCatalogo,
   ErroIpc,
@@ -79,7 +78,15 @@ export function criarNucleoSimuladoDeIntegracoes(
   const estados = new Map<TipoIntegracao, Integracao>(
     ORDEM.map((tipo) => [
       tipo,
-      { tipo, status: "desconectado", conta: null, versao: null, ...inicial[tipo] },
+      {
+        tipo,
+        status: "desconectado",
+        conta: null,
+        versao: null,
+        notas_indexadas: null,
+        erro: null,
+        ...inicial[tipo],
+      },
     ]),
   );
   const falhasDeChecagem = new Map<TipoIntegracao, ErroIpc>();
@@ -101,7 +108,12 @@ export function criarNucleoSimuladoDeIntegracoes(
       if (falha) {
         falhasDeChecagem.delete(tipo);
         if (falha.tipo === "catalogo" && falha.erro.codigo === "INTEGRACAO_FALHA_INESPERADA") {
-          definir(tipo, { status: "desconectado", conta: null });
+          definir(tipo, {
+            status: "desconectado",
+            conta: null,
+            notas_indexadas: null,
+            erro: falha.erro,
+          });
         }
         throw falha;
       }
@@ -117,7 +129,7 @@ export function criarNucleoSimuladoDeIntegracoes(
         throw falha;
       }
       if (!roteiro.aguardarHumano) {
-        definir(tipo, { status: "conectado" });
+        definir(tipo, { status: "conectado", erro: null });
         return estado(tipo);
       }
       return new Promise<Integracao>((resolver, rejeitar) => {
@@ -130,7 +142,7 @@ export function criarNucleoSimuladoDeIntegracoes(
         falhasDeDesconexao.delete(tipo);
         throw falha;
       }
-      definir(tipo, { status: "desconectado", conta: null });
+      definir(tipo, { status: "desconectado", conta: null, notas_indexadas: null, erro: null });
       return estado(tipo);
     },
   };
@@ -158,6 +170,7 @@ export function criarNucleoSimuladoDeIntegracoes(
     concluirConexao: (tipo, { conta, versao }) => {
       definir(tipo, {
         status: "conectado",
+        erro: null,
         conta: conta ?? estados.get(tipo)!.conta,
         versao: versao ?? estados.get(tipo)!.versao,
       });

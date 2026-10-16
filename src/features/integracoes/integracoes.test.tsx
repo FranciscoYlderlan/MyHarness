@@ -6,6 +6,7 @@ import { clearMocks } from "@tauri-apps/api/mocks";
 import { MainWindow } from "@/app/main-window";
 import { mockCommands } from "@/bindings";
 import type { IntegracaoMudou } from "@/lib/ipc";
+import { estadoInicial, reduzir } from "./estado";
 import {
   criarNucleoSimuladoDeIntegracoes,
   erroDoCatalogo,
@@ -57,7 +58,14 @@ describe("CMP-03 indicador de integrações", () => {
     expect(indicador()).toHaveAccessibleName(/GitHub: desconectado/);
 
     const mudou: IntegracaoMudou = {
-      integracao: { tipo: "github", status: "conectado", conta: "octo", versao: null },
+      integracao: {
+        tipo: "github",
+        status: "conectado",
+        conta: "octo",
+        versao: null,
+        notas_indexadas: null,
+        erro: null,
+      },
     };
     await act(() => emit("integracao-mudou", mudou));
     await waitFor(() => expect(indicador()).toHaveAttribute("data-situacao", "conectado"));
@@ -288,17 +296,61 @@ describe("TEL-02 integrações", () => {
     await waitFor(() => expect(c).toHaveTextContent("octo"));
   });
 
-  it("comando sem núcleo (interno) mostra a mensagem do ERR-55", async () => {
+  it("comando ainda não implementado no núcleo mostra o ERR-55 com o motivo", async () => {
     const nucleo = iniciar({ ...todasConectadas, github: { status: "desconectado" } });
     await abrirPainel();
-    nucleo.falharConexaoDireto("github", { tipo: "interno", motivo: "nao_implementado" });
+    nucleo.falharConexaoDireto(
+      "github",
+      erroDoCatalogo("FALHA_INTERNA", "ERR-55", {
+        motivo: "o comando conectar_integracao ainda não foi implementado",
+      }),
+    );
     const c = cartao("GitHub");
     act(() => within(c).getByRole("button", { name: "Conectar" }).click());
     await waitFor(() =>
       expect(within(c).getByRole("alert")).toHaveTextContent(
-        "Algo deu errado no MyHarness: comando ainda não implementado no núcleo. Tente de novo.",
+        "Algo deu errado no MyHarness: o comando conectar_integracao ainda não foi implementado. Tente de novo.",
       ),
     );
+  });
+
+  it("AC-128: Obsidian aberto mostra o número de notas indexadas no cartão", async () => {
+    iniciar({ ...todasConectadas, obsidian_cli: { status: "conectado", notas_indexadas: 75 } });
+    await abrirPainel();
+    const c = cartao("Obsidian CLI");
+    expect(c).toHaveAttribute("data-situacao", "conectado");
+    expect(within(c).getByText("Notas indexadas")).toBeInTheDocument();
+    expect(within(c).getByText("75")).toBeInTheDocument();
+    expect(within(cartao("GitHub")).queryByText("Notas indexadas")).not.toBeInTheDocument();
+  });
+
+  it("M-46: o motivo do ERR-53 que vem de listar aparece no cartão, com Repetir", async () => {
+    const erro = falhaInesperada("obsidian_cli", "cofre myHarness-vault não encontrado");
+    if (erro.tipo !== "catalogo") throw new Error("erro do catálogo esperado");
+    iniciar({ ...todasConectadas, obsidian_cli: { status: "desconectado", erro: erro.erro } });
+    await waitFor(() => expect(indicador()).toHaveAttribute("data-situacao", "erro"));
+    expect(indicador()).toHaveAccessibleName(/Obsidian CLI: desconectado/);
+    await abrirPainel();
+    const c = cartao("Obsidian CLI");
+    expect(within(c).getByRole("alert")).toHaveTextContent(
+      "Falha inesperada com Obsidian CLI: cofre myHarness-vault não encontrado. Tente de novo.",
+    );
+    expect(within(c).getByRole("button", { name: "Repetir" })).toBeInTheDocument();
+  });
+
+  it("listar com ERR-01 mostra não instalado e o link de instalação", async () => {
+    iniciar({
+      ...todasConectadas,
+      claude_cli: {
+        status: "nao_instalado",
+        erro: { codigo: "CLAUDE_CLI_NAO_INSTALADO", id: "ERR-01", parametros: {} },
+      },
+    });
+    await abrirPainel();
+    const c = cartao("Claude CLI");
+    expect(c).toHaveTextContent("não instalado");
+    expect(within(c).getByRole("alert")).toHaveTextContent("Claude CLI não encontrado");
+    expect(within(c).getByRole("link", { name: "Instalar o Claude CLI" })).toBeInTheDocument();
   });
 
   it("fechar o painel volta à área de trabalho com o indicador atualizado (NAV-04)", async () => {
@@ -309,5 +361,29 @@ describe("TEL-02 integrações", () => {
     act(() => within(painel).getByRole("button", { name: "Fechar" }).click());
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(indicador()).toHaveAttribute("data-situacao", "conectado");
+  });
+});
+
+describe("estado da TEL-02", () => {
+  it("M-46: o erro que vem no estado (listar ou evento) vira o erro do cartão", () => {
+    const erro = falhaInesperada("github", "erro de rede");
+    if (erro.tipo !== "catalogo") throw new Error("erro do catálogo esperado");
+    const estado = reduzir(estadoInicial(), {
+      tipo: "recebeu",
+      integracao: {
+        tipo: "github",
+        status: "desconectado",
+        conta: null,
+        versao: null,
+        notas_indexadas: null,
+        erro: erro.erro,
+      },
+    });
+    expect(estado.github.erro).toEqual({ erro: erro.erro, operacao: "checar" });
+    const limpo = reduzir(estado, {
+      tipo: "recebeu",
+      integracao: { ...estado.github.integracao!, status: "conectado", erro: null },
+    });
+    expect(limpo.github.erro).toBeNull();
   });
 });
