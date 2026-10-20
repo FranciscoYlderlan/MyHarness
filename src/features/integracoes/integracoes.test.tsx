@@ -458,3 +458,45 @@ describe("estado da TEL-02", () => {
     expect(limpo.github.erro).toBeNull();
   });
 });
+
+describe("guarda de operação em andamento", () => {
+  const codigoDoDispositivo = {
+    tipo: "codigo_do_dispositivo",
+    codigo: "WDJB-MJHT",
+    endereco: "https://github.com/login/device",
+  } as const;
+
+  it("listar que chega durante conectar mantém o código e o estado em andamento", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes({
+      ...todasConectadas,
+      github: { status: "desconectado" },
+    });
+    let liberarListar: (() => void) | null = null;
+    mockCommands({
+      ...nucleo.handlers,
+      listarIntegracoes: () =>
+        new Promise((resolver) => {
+          liberarListar = () => resolver(nucleo.handlers.listarIntegracoes!());
+        }),
+    });
+    render(<MainWindow />);
+    act(() => indicador().click());
+    await screen.findByRole("dialog", { name: "Integrações" });
+    const c = cartao("GitHub");
+    const conectar = await within(c).findByRole("button", { name: "Conectar" });
+
+    nucleo.roteiroDeConexao("github", { instrucoes: [codigoDoDispositivo], aguardarHumano: true });
+    act(() => conectar.click());
+    await waitFor(() => expect(within(c).getByText("WDJB-MJHT")).toBeInTheDocument());
+
+    // O `listar` da abertura chega agora, com o GitHub ainda desconectado.
+    expect(liberarListar).not.toBeNull();
+    await act(async () => liberarListar!());
+    expect(c).toHaveTextContent("login em andamento");
+    expect(within(c).getByText("WDJB-MJHT")).toBeInTheDocument();
+
+    act(() => nucleo.concluirConexao("github", { conta: "FranciscoYlderlan" }));
+    await waitFor(() => expect(c).toHaveAttribute("data-situacao", "conectado"));
+    expect(c).toHaveTextContent("FranciscoYlderlan");
+  });
+});
