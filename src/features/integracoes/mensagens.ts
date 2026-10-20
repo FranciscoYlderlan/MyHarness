@@ -52,7 +52,7 @@ export function statusDepoisDoErro(erro: ErroCatalogo): StatusIntegracao | null 
 }
 
 /** `<motivo>` do ERR-02, nas palavras do catálogo (M-47); o núcleo manda o código. */
-const MOTIVO_DO_OAUTH: Record<string, string> = {
+const MOTIVO_DO_OAUTH: Partial<Record<string, string>> = {
   cancelado: "cancelada",
   access_denied: "recusada no GitHub",
   expired_token: "código expirado",
@@ -70,10 +70,11 @@ export function mensagemDoErro(erro: ErroCatalogo, tipo: TipoIntegracao): string
   switch (erro.codigo) {
     case "CLAUDE_CLI_NAO_INSTALADO":
       return "Claude CLI não encontrado";
-    case "GITHUB_OAUTH_NAO_CONCLUIDO":
-      return p.motivo
-        ? `Conexão com o GitHub não concluída: ${MOTIVO_DO_OAUTH[p.motivo] ?? p.motivo}.`
-        : semValor;
+    case "GITHUB_OAUTH_NAO_CONCLUIDO": {
+      // Motivo fora do catálogo não aparece cru (M-47): a tela mostra o id e o código.
+      const motivo = p.motivo ? MOTIVO_DO_OAUTH[p.motivo] : undefined;
+      return motivo ? `Conexão com o GitHub não concluída: ${motivo}.` : semValor;
+    }
     case "OBSIDIAN_FECHADO":
       return p.mensagem_da_cli || semValor;
     case "LOGIN_CLAUDE_CLI_FALHOU":

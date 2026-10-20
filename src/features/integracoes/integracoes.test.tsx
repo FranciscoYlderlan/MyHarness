@@ -166,6 +166,14 @@ describe("mensagens só do catálogo", () => {
         ),
       ).toBe(`Conexão com o GitHub não concluída: ${texto}.`);
     }
+    for (const motivo of ["motivo_desconhecido", ""]) {
+      expect(
+        mensagemDoErro(
+          { codigo: "GITHUB_OAUTH_NAO_CONCLUIDO", id: "ERR-02", parametros: { motivo } },
+          "github",
+        ),
+      ).toBe("ERR-02 GITHUB_OAUTH_NAO_CONCLUIDO");
+    }
   });
 });
 
