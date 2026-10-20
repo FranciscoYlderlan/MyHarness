@@ -165,7 +165,10 @@ async fn ac_04_ac_129_access_denied_fica_desconectado_com_err_02() {
         ErroIntegracao::GithubOauthNaoConcluido(MotivoOauthNaoConcluido::Recusado)
     );
     assert_eq!(erro.id(), "ERR-02");
-    assert_eq!(erro.to_string(), "Conexão com o GitHub não concluída");
+    assert_eq!(
+        erro.to_string(),
+        "Conexão com o GitHub não concluída: recusada no GitHub."
+    );
     let detalhado = c.github.conectar_com(&Observador::default()).await;
     // Sem roteiro, o falso fica pendente até o código vencer: ERR-02 expirado.
     assert_eq!(

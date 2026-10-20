@@ -24,8 +24,19 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
     github: 0,
   });
 
+  // Guarda de operação em andamento: uma operação por integração de cada vez (checar não
+  // passa por cima de desconectar, nem dois conectar ao mesmo tempo). Ref, e não o estado,
+  // para valer já no mesmo instante, antes do React redesenhar.
+  const andamento = useRef<Record<TipoIntegracao, Operacao | null>>({
+    claude_cli: null,
+    obsidian_cli: null,
+    github: null,
+  });
+
   const rodar = useCallback(
     async (tipo: TipoIntegracao, operacao: Operacao, chamada: () => Promise<Resultado>) => {
+      if (andamento.current[tipo] !== null) return;
+      andamento.current[tipo] = operacao;
       const minha = ++vez.current[tipo];
       despachar({ tipo: "iniciou", integracao: tipo, operacao });
       let resultado: Resultado;
@@ -33,6 +44,8 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
         resultado = await chamada();
       } catch (e) {
         resultado = { status: "error", error: e };
+      } finally {
+        andamento.current[tipo] = null;
       }
       if (!montado.current || vez.current[tipo] !== minha) return;
       if (resultado.status === "ok") despachar({ tipo: "recebeu", integracao: resultado.data });
@@ -49,7 +62,6 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
 
   const checar = useCallback(
     (tipo: TipoIntegracao) => {
-      if (estadoRef.current[tipo].emAndamento === "conectar") return;
       void rodar(tipo, "checar", () => commands.testarIntegracao(tipo));
     },
     [rodar],
@@ -82,6 +94,7 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
 
   const repetir = useCallback(
     (tipo: TipoIntegracao) => {
+      if (andamento.current[tipo] !== null) return;
       const operacao = estadoRef.current[tipo].erro?.operacao ?? "checar";
       if (operacao === "conectar") conectar(tipo);
       else if (operacao === "desconectar") desconectar(tipo);

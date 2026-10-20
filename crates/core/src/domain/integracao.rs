@@ -155,6 +155,23 @@ pub enum MotivoOauthNaoConcluido {
     Expirado,
 }
 
+impl MotivoOauthNaoConcluido {
+    /// `<motivo>` da mensagem do ERR-02, com as palavras do catálogo (M-47).
+    pub fn texto(self) -> &'static str {
+        match self {
+            MotivoOauthNaoConcluido::Cancelado => "cancelada",
+            MotivoOauthNaoConcluido::Recusado => "recusada no GitHub",
+            MotivoOauthNaoConcluido::Expirado => "código expirado",
+        }
+    }
+}
+
+impl fmt::Display for MotivoOauthNaoConcluido {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.texto())
+    }
+}
+
 /// Erros do catálogo (`05-erros.md`) que uma integração pode devolver.
 /// Cada variante é um ERR; [`ErroIntegracao::codigo`] é o código que o núcleo devolve
 /// e a tela usa para escolher a mensagem.
@@ -163,8 +180,9 @@ pub enum ErroIntegracao {
     /// ERR-01: o executável do Claude CLI não é encontrado (UC-01 FE-01).
     #[error("Claude CLI não encontrado")]
     ClaudeCliNaoInstalado,
-    /// ERR-02: o device flow do GitHub foi cancelado, recusado ou expirou (UC-01 FE-02).
-    #[error("Conexão com o GitHub não concluída")]
+    /// ERR-02: o device flow do GitHub foi cancelado, recusado ou expirou (UC-01 FE-02);
+    /// a mensagem traz o motivo (M-47).
+    #[error("Conexão com o GitHub não concluída: {0}.")]
     GithubOauthNaoConcluido(MotivoOauthNaoConcluido),
     /// ERR-03: o Obsidian está fechado ao checar o status (UC-01 FE-03).
     /// Guarda a mensagem da própria CLI, que é a mostrada ao Humano, já mascarada (RN-04).
@@ -384,10 +402,17 @@ mod tests {
             ErroIntegracao::ClaudeCliNaoInstalado.to_string(),
             "Claude CLI não encontrado"
         );
-        assert_eq!(
-            ErroIntegracao::GithubOauthNaoConcluido(MotivoOauthNaoConcluido::Cancelado).to_string(),
-            "Conexão com o GitHub não concluída"
-        );
+        // M-47: o ERR-02 traz o motivo, nas palavras do catálogo.
+        for (motivo, texto) in [
+            (MotivoOauthNaoConcluido::Cancelado, "cancelada"),
+            (MotivoOauthNaoConcluido::Recusado, "recusada no GitHub"),
+            (MotivoOauthNaoConcluido::Expirado, "código expirado"),
+        ] {
+            assert_eq!(
+                ErroIntegracao::GithubOauthNaoConcluido(motivo).to_string(),
+                format!("Conexão com o GitHub não concluída: {texto}.")
+            );
+        }
         assert_eq!(
             ErroIntegracao::ObsidianFechado {
                 mensagem_da_cli: "msg da CLI".into()
