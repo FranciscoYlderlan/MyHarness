@@ -4,10 +4,16 @@
 //! (decisão `geral-decisao-2026-11-20-mascaramento-sem-adivinhar`):
 //!
 //! 1. Token com prefixo conhecido ([`PREFIXOS`], sem diferenciar maiúsculas) some inteiro:
-//!    do prefixo até o primeiro caractere fora de `[A-Za-z0-9_-]`. O prefixo só conta
-//!    numa fronteira: início do texto ou caractere anterior fora de `[A-Za-z0-9_]`.
+//!    do prefixo até o primeiro caractere fora de `[A-Za-z0-9_-]`. Qualquer ocorrência
+//!    do prefixo inicia um token, sem exigir fronteira antes dele (`%20ghp_…`,
+//!    `token%3Dghp_…`, `xghp_…`), desde que venha pelo menos 1 caractere de
+//!    `[A-Za-z0-9_-]` depois dele: prefixo nu (`ghs_` sozinho) não é token.
 //! 2. O valor exato de cada [`Segredo`] que o núcleo guarda some em toda ocorrência
 //!    ([`mascarar_com`]).
+//!
+//! Os trechos das duas regras são calculados no texto original, juntados quando se
+//! tocam ou se sobrepõem e trocados numa passada só, cada trecho unido por um
+//! [`MASCARA`]: segredo guardado dentro de um token não deixa sobrar o resto do token.
 //!
 //! Nada mais é mascarado: cabeçalho `Authorization`, `chave=valor`, `--token`, URL ou
 //! PEM ficam como estão, a menos que tragam um desses dois casos. Texto sem segredo sai
@@ -36,17 +42,16 @@ pub fn mascarar(texto: &str) -> Cow<'_, str> {
     substituir(texto, &trechos_com_prefixo(texto))
 }
 
-/// Mascara o valor exato de cada segredo guardado (regra 2) e depois os tokens com
-/// prefixo conhecido (regra 1).
+/// Mascara o valor exato de cada segredo guardado (regra 2) e os tokens com prefixo
+/// conhecido (regra 1), numa passada só sobre o texto original.
 ///
-/// Segredo vazio é ignorado. Quando segredos se sobrepõem no texto (um dentro do outro
-/// ou encavalados), o trecho coberto por eles vira uma máscara só, a partir do mais longo:
+/// Segredo vazio é ignorado. Os trechos de token e de segredo guardado que se tocam ou
+/// se sobrepõem (um dentro do outro, encavalados ou colados) viram uma máscara só:
 /// nenhum pedaço de nenhum deles sobra.
 pub fn mascarar_com<'a>(texto: &'a str, segredos: &[&Segredo]) -> Cow<'a, str> {
-    match substituir(texto, &trechos_guardados(texto, segredos)) {
-        Cow::Borrowed(t) => mascarar(t),
-        Cow::Owned(t) => Cow::Owned(mascarar(&t).into_owned()),
-    }
+    let mut trechos = trechos_guardados(texto, segredos);
+    trechos.extend(trechos_com_prefixo(texto));
+    substituir(texto, &juntar(trechos))
 }
 
 /// Valor secreto que o núcleo guarda (ex.: token do device flow do GitHub).
@@ -155,15 +160,15 @@ fn trechos_com_prefixo(texto: &str) -> Vec<Range<usize>> {
     let mut trechos = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        let na_fronteira =
-            i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        // Prefixo seguido de pelo menos 1 caractere de token; sem fronteira antes dele.
         let prefixo = PREFIXOS.iter().find(|p| {
             bytes
                 .get(i..i + p.len())
                 .is_some_and(|s| s.eq_ignore_ascii_case(p.as_bytes()))
+                && bytes.get(i + p.len()).is_some_and(|&b| de_token(b))
         });
         match prefixo {
-            Some(p) if na_fronteira => {
+            Some(p) => {
                 let mut fim = i + p.len();
                 while fim < bytes.len() && de_token(bytes[fim]) {
                     fim += 1;
@@ -171,14 +176,14 @@ fn trechos_com_prefixo(texto: &str) -> Vec<Range<usize>> {
                 trechos.push(i..fim);
                 i = fim;
             }
-            _ => i += 1,
+            None => i += 1,
         }
     }
     trechos
 }
 
 /// Trechos de todas as ocorrências (inclusive encavaladas) dos valores guardados,
-/// juntados quando se sobrepõem.
+/// já juntados.
 fn trechos_guardados(texto: &str, segredos: &[&Segredo]) -> Vec<Range<usize>> {
     let mut trechos = Vec::new();
     for valor in segredos.iter().map(|s| s.expor()).filter(|v| !v.is_empty()) {
@@ -189,12 +194,17 @@ fn trechos_guardados(texto: &str, segredos: &[&Segredo]) -> Vec<Range<usize>> {
             desde = inicio + texto[inicio..].chars().next().map_or(1, char::len_utf8);
         }
     }
+    juntar(trechos)
+}
+
+/// Ordena os trechos e junta os que se tocam ou se sobrepõem, para [`substituir`].
+fn juntar(mut trechos: Vec<Range<usize>>) -> Vec<Range<usize>> {
     // Do início para o fim e, no mesmo início, o mais longo primeiro.
     trechos.sort_by_key(|t| (t.start, std::cmp::Reverse(t.end)));
     let mut juntos: Vec<Range<usize>> = Vec::with_capacity(trechos.len());
     for t in trechos {
         match juntos.last_mut() {
-            Some(ultimo) if t.start < ultimo.end => ultimo.end = ultimo.end.max(t.end),
+            Some(ultimo) if t.start <= ultimo.end => ultimo.end = ultimo.end.max(t.end),
             _ => juntos.push(t),
         }
     }
@@ -290,27 +300,61 @@ mod tests {
     }
 
     #[test]
-    fn prefixo_sem_fronteira_nao_conta() {
-        for texto in [
-            "xghp_abc",
-            "1ghp_abc",
-            "_ghp_abc",
-            "meu_github_pat_abc",
-            "desk-ant-abc",
-            "ghx_abc",
-            "sk-anthropic",
+    fn prefixo_sem_fronteira_tambem_conta() {
+        for (entrada, esperado) in [
+            ("xghp_abc", "x••••"),
+            ("1ghp_abc", "1••••"),
+            ("_ghp_abc", "_••••"),
+            ("meu_ghp_abc", "meu_••••"),
+            ("meu_github_pat_abc", "meu_••••"),
+            ("desk-ant-abc", "de••••"),
+            ("a-ghp_abc", "a-••••"),
         ] {
+            assert_eq!(mascarar(entrada), esperado, "{entrada:?}");
+        }
+        for texto in ["ghx_abc", "sk-anthropic"] {
             sem_mudanca(texto);
         }
-        // `-` não é de identificador: o prefixo depois dele está numa fronteira.
-        assert_eq!(mascarar("a-ghp_abc"), "a-••••");
+    }
+
+    #[test]
+    fn prefixo_colado_em_codificacao_de_url() {
+        let t = "ghp_16C7e42F292c6912E7710c838347Ae178B4a";
+        assert_eq!(mascarar(&format!("%20{t}%20")), "%20••••%20");
+        assert_eq!(mascarar(&format!("token%3D{t}")), "token%3D••••");
+    }
+
+    #[test]
+    fn prefixo_nu_nao_e_token() {
+        sem_mudanca("ghs-abc não é ghs_");
+        for p in PREFIXOS {
+            sem_mudanca(p);
+            sem_mudanca(&format!("{p} solto"));
+        }
+        assert_eq!(mascarar("ghp_x"), "••••");
     }
 
     #[test]
     fn token_termina_no_primeiro_caractere_fora_do_conjunto() {
         assert_eq!(mascarar("ghp_ab-c_d.e"), "••••.e");
         assert_eq!(mascarar("ghp_ab/cd"), "••••/cd");
-        assert_eq!(mascarar("ghp_"), "••••");
+        assert_eq!(mascarar("ghp_-"), "••••");
+    }
+
+    #[test]
+    fn segredo_guardado_dentro_de_token_nao_vaza_o_resto() {
+        let entrada = "x ghp_16C7e42F292c6912E7710c838347Ae178B4a y";
+        for valor in ["292c6912", "ghp_16C7e42F"] {
+            let s = Segredo::new(valor);
+            assert_eq!(mascarar_com(entrada, &[&s]), "x •••• y", "{valor:?}");
+        }
+    }
+
+    #[test]
+    fn segredo_colado_em_token_vira_uma_mascara_so() {
+        let s = Segredo::new("guardado");
+        assert_eq!(mascarar_com("x guardadoghp_abc y", &[&s]), "x •••• y");
+        assert_eq!(mascarar_com("x ghp_abc.guardado y", &[&s]), "x ••••.•••• y");
     }
 
     #[test]
