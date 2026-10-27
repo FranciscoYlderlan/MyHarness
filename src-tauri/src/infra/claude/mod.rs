@@ -9,12 +9,16 @@
 //!   Falhou: ERR-04, `sem login`.
 //! - Tempo esgotado, saída que não dá para ler ou processo que não abre: ERR-53,
 //!   `desconectado`.
+//! - "Desconectar" durante o login cancela o login: o processo da CLI morre (com a árvore
+//!   dele) e `conectar` devolve `desconectado`, o mesmo estado que o núcleo guarda (B2).
 //!
 //! Todo texto que vem da CLI e vai à tela ou a erro passa pela máscara (RN-04, AC-154).
 
 use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -24,6 +28,7 @@ use my_harness_core::domain::integracao::{
 };
 use my_harness_core::domain::segredo::TextoMascarado;
 use serde::Deserialize;
+use tokio::sync::Notify;
 
 use crate::infra::process::{self, FalhaProcesso, Saida};
 
@@ -150,16 +155,62 @@ struct StatusAutenticacao {
     email: Option<String>,
 }
 
+/// Pedido de cancelamento do login em andamento (vem do "Desconectar").
+#[derive(Debug, Default)]
+struct Cancelamento {
+    pedido: AtomicBool,
+    aviso: Notify,
+}
+
+impl Cancelamento {
+    fn limpar(&self) {
+        self.pedido.store(false, Ordering::SeqCst);
+    }
+
+    fn pedir(&self) {
+        self.pedido.store(true, Ordering::SeqCst);
+        self.aviso.notify_waiters();
+    }
+
+    fn pedido(&self) -> bool {
+        self.pedido.load(Ordering::SeqCst)
+    }
+
+    /// Termina só quando o cancelamento foi pedido (aviso antigo não conta).
+    async fn esperar(&self) {
+        loop {
+            // Inscreve antes de olhar a marca, para não perder um aviso no meio.
+            let aviso = self.aviso.notified();
+            tokio::pin!(aviso);
+            aviso.as_mut().enable();
+            if self.pedido() {
+                return;
+            }
+            aviso.await;
+        }
+    }
+}
+
 /// A integração com o Claude CLI.
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeCli {
     config: ConfigClaudeCli,
+    cancelamento: Arc<Cancelamento>,
 }
 
 impl ClaudeCli {
     /// Integração com a configuração dada.
     pub fn new(config: ConfigClaudeCli) -> Self {
-        Self { config }
+        Self {
+            config,
+            cancelamento: Arc::default(),
+        }
+    }
+
+    /// Cancela o login em andamento: o processo da CLI morre e [`Self::fazer_login`]
+    /// devolve `desconectado`. Sem login em andamento, não faz nada.
+    pub fn cancelar(&self) {
+        self.cancelamento.pedir();
     }
 
     /// Caminho do executável, ou ERR-01.
@@ -206,8 +257,33 @@ impl ClaudeCli {
 
     /// Conecta (UC-01 passos 2 e 3): já logado, devolve o estado sem novo login (FA-01);
     /// sem login, roda o login da CLI, repassa cada linha ao `observador` (mascarada) e
-    /// checa de novo. Erros: ERR-01, ERR-04, ERR-53.
+    /// checa de novo. Cancelado ([`Self::cancelar`]): `desconectado`, com o processo
+    /// encerrado. Erros: ERR-01, ERR-04, ERR-53.
     pub async fn fazer_login(
+        &self,
+        observador: &dyn ObservadorConexao,
+    ) -> Result<EstadoIntegracao, ErroClaudeCli> {
+        self.cancelamento.limpar();
+        let cancelado = self.cancelamento.clone();
+        tokio::select! {
+            biased;
+            _ = cancelado.esperar() => Ok(Self::estado_cancelado()),
+            resultado = self.login_sem_cancelamento(observador) => {
+                if self.cancelamento.pedido() {
+                    Ok(Self::estado_cancelado())
+                } else {
+                    resultado
+                }
+            }
+        }
+    }
+
+    /// Estado do login cancelado: `desconectado`, como o núcleo guarda (B2).
+    fn estado_cancelado() -> EstadoIntegracao {
+        EstadoIntegracao::novo(TipoIntegracao::ClaudeCli, StatusIntegracao::Desconectado)
+    }
+
+    async fn login_sem_cancelamento(
         &self,
         observador: &dyn ObservadorConexao,
     ) -> Result<EstadoIntegracao, ErroClaudeCli> {
@@ -353,8 +429,10 @@ impl Integracao for ClaudeCli {
     }
 
     /// Não faz logout da CLI (que tiraria o login do Humano também fora do MyHarness):
-    /// só devolve `desconectado`, e o núcleo para de usar a integração.
+    /// cancela o login em andamento e devolve `desconectado`, e o núcleo para de usar a
+    /// integração.
     async fn desconectar(&self) -> Result<EstadoIntegracao, ErroIntegracao> {
+        self.cancelar();
         Ok(EstadoIntegracao::novo(
             TipoIntegracao::ClaudeCli,
             StatusIntegracao::Desconectado,

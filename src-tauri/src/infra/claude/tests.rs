@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use my_harness_core::application::integracao::{
@@ -473,6 +473,54 @@ async fn err_53_status_de_login_ilegivel() {
 
     assert_eq!(erro.id(), "ERR-53");
     assert_eq!(erro.estado().status, StatusIntegracao::Desconectado);
+}
+
+// ---------- B2: "Desconectar" durante o login cancela o login ----------
+
+/// O login fica esperando o Humano (`dormir_ms`); "Desconectar" pelo trait cancela: o
+/// `conectar` devolve `desconectado` logo, sem esperar o processo nem o tempo-limite.
+#[tokio::test]
+async fn desconectar_durante_o_login_cancela_e_devolve_desconectado() {
+    let cli = CliFalsa::nova(json!({
+        "login": { "stdout": "https://claude.ai/oauth/authorize?x\n", "dormir_ms": 8000 }
+    }));
+    let claude = Arc::new(cli.claude());
+    let gravador = Arc::new(Gravador::default());
+
+    let (c, g) = (claude.clone(), gravador.clone());
+    let login = tokio::spawn(async move { c.conectar(g.as_ref()).await });
+    // Espera o link do login chegar: o processo do login está rodando.
+    let inicio = std::time::Instant::now();
+    while gravador.mensagens().len() < 2 {
+        assert!(
+            inicio.elapsed() < Duration::from_secs(5),
+            "o login não começou"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let estado = claude.desconectar().await.unwrap();
+    assert_eq!(estado.status, StatusIntegracao::Desconectado);
+    let estado = tokio::time::timeout(Duration::from_secs(3), login)
+        .await
+        .expect("o login não parou no cancelamento")
+        .unwrap()
+        .unwrap();
+    assert_eq!(estado.status, StatusIntegracao::Desconectado);
+
+    // O cancelamento não fica preso: o próximo "Conectar" roda o login de novo. (O
+    // `fake-claude` marca o login logo no começo: a marca sai para a CLI voltar sem login.)
+    let mut marca = cli.executavel.clone().into_os_string();
+    marca.push(".logado");
+    let _ = std::fs::remove_file(marca);
+    cli.cenario(json!({ "login": { "stdout": "Login successful.\n" } }));
+    let gravador = Gravador::default();
+    let estado = claude.conectar(&gravador).await.unwrap();
+    assert_eq!(estado.status, StatusIntegracao::Conectado);
+    assert_eq!(
+        gravador.mensagens(),
+        [INSTRUCAO_INICIO_LOGIN, "Login successful."]
+    );
 }
 
 // ---------- trait e desconectar ----------
