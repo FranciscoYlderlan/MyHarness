@@ -4,16 +4,30 @@
 //! como estado do Tauri. As integrações (UC-01) já são reais ([`ServicoIntegracoes`]);
 //! o resto ainda é provisório: listas vazias, consumo indisponível (ERR-41) e ERR-55
 //! `FALHA_INTERNA` ("ainda não implementado") em toda escrita. Nada é inventado.
+//!
+//! **Conexão em andamento** (UC-01 FA-02, AC-157; decisão
+//! `geral-decisao-2026-11-26-conectar-repetido-reaproveita`): o núcleo guarda uma conexão
+//! por integração. "Conectar" pedido de novo com ela em andamento (dois cliques, a tela
+//! recarregada) não abre outro fluxo: recebe as instruções já mandadas, as próximas e o
+//! mesmo resultado. "Desconectar" durante a conexão a cancela, e o `conectar` devolve o
+//! estado que o núcleo guarda (`desconectado`; no GitHub, ERR-02 cancelado). Os dois
+//! casos vão ao registro de operações do núcleo.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use my_harness_core::application::integracao::{
     InstrucaoConexao as InstrucaoCore, ObservadorConexao,
 };
-use my_harness_core::domain::integracao::TipoIntegracao as TipoCore;
+use my_harness_core::domain::integracao::{
+    ErroIntegracao, EstadoIntegracao, MotivoOauthNaoConcluido, StatusIntegracao as StatusCore,
+    TipoIntegracao as TipoCore,
+};
 use my_harness_core::domain::segredo::TextoMascarado;
 use tauri::ipc::Channel;
+use tokio::sync::{Notify, watch};
 
 use super::dto::*;
 use super::erro::{CodigoErro, ComAvisos, ErroIpc};
@@ -132,10 +146,16 @@ pub trait Nucleo: Send + Sync {
     async fn listar_logs(&self, chat: ChatId) -> Resultado<Vec<Log>>;
 }
 
+/// Quem recebe as operações de integração que o núcleo registra (conexão repetida
+/// reaproveitada, conexão cancelada pelo "Desconectar"). Padrão: a saída de erro.
+pub type RegistroDeOperacoes = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// O núcleo do app: integrações reais e o resto provisório.
 pub struct NucleoMyHarness {
     integracoes: ServicoIntegracoes,
     registro: Arc<dyn RegistroNucleo>,
+    conexoes: Mutex<HashMap<TipoIntegracao, Arc<ConexaoEmAndamento>>>,
+    operacoes: RegistroDeOperacoes,
 }
 
 impl std::fmt::Debug for NucleoMyHarness {
@@ -152,7 +172,51 @@ impl NucleoMyHarness {
         Self {
             integracoes,
             registro,
+            conexoes: Mutex::new(HashMap::new()),
+            operacoes: Arc::new(|texto| eprintln!("[myharness] {texto}")),
         }
+    }
+
+    /// Define quem recebe as operações de integração registradas (os testes guardam).
+    pub fn com_registro_de_operacoes(mut self, operacoes: RegistroDeOperacoes) -> Self {
+        self.operacoes = operacoes;
+        self
+    }
+
+    fn conexoes(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<TipoIntegracao, Arc<ConexaoEmAndamento>>> {
+        self.conexoes.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Conduz a conexão nova `conexao` até o fim (ou o cancelamento) e publica o
+    /// resultado para quem pediu "Conectar" de novo no meio.
+    async fn conduzir(
+        &self,
+        tipo: TipoIntegracao,
+        conexao: Arc<ConexaoEmAndamento>,
+    ) -> Resultado<Integracao> {
+        let fim = FimDaConexao {
+            conexoes: &self.conexoes,
+            tipo,
+            conexao: conexao.clone(),
+        };
+        let observador = Arc::new(ObservadorConexoes(conexao.clone()));
+        let resultado = tokio::select! {
+            biased;
+            // Cancelada: a conexão do serviço para aqui, sem avisar o estado dela; o
+            // "Desconectar" que cancelou avisa o estado guardado.
+            _ = conexao.esperar_cancelamento() => estado_cancelado(tipo),
+            resultado = self.integracoes.conectar(tipo.into(), observador) => {
+                if conexao.cancelada() {
+                    estado_cancelado(tipo)
+                } else {
+                    resultado.map(Into::into)
+                }
+            }
+        };
+        fim.concluir(resultado.clone());
+        resultado
     }
 
     /// O serviço das integrações.
@@ -174,13 +238,152 @@ impl NucleoMyHarness {
     }
 }
 
-/// Manda as instruções da conexão pelo canal do comando `conectar_integracao`.
-struct ObservadorCanal(Channel<InstrucaoConexao>);
+/// Uma conexão em andamento (UC-01 FA-02): as instruções já mandadas, os canais de
+/// quem pediu "Conectar", o pedido de cancelamento e o resultado, quando sai.
+struct ConexaoEmAndamento {
+    ouvintes: Mutex<Ouvintes>,
+    cancelada: AtomicBool,
+    aviso_cancelamento: Notify,
+    resultado: watch::Sender<Option<Resultado<Integracao>>>,
+}
 
-impl ObservadorConexao for ObservadorCanal {
+#[derive(Default)]
+struct Ouvintes {
+    instrucoes: Vec<InstrucaoConexao>,
+    canais: Vec<Channel<InstrucaoConexao>>,
+}
+
+impl ConexaoEmAndamento {
+    fn nova(canal: Channel<InstrucaoConexao>) -> Self {
+        Self {
+            ouvintes: Mutex::new(Ouvintes {
+                instrucoes: Vec::new(),
+                canais: vec![canal],
+            }),
+            cancelada: AtomicBool::new(false),
+            aviso_cancelamento: Notify::new(),
+            resultado: watch::channel(None).0,
+        }
+    }
+
+    fn ouvintes(&self) -> std::sync::MutexGuard<'_, Ouvintes> {
+        self.ouvintes.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Mais um pedido de "Conectar": recebe as instruções já mandadas e as próximas.
+    fn juntar(&self, canal: Channel<InstrucaoConexao>) {
+        let mut ouvintes = self.ouvintes();
+        for instrucao in &ouvintes.instrucoes {
+            // Tela fechada: a instrução se perde; a conexão segue.
+            let _ = canal.send(instrucao.clone());
+        }
+        ouvintes.canais.push(canal);
+    }
+
+    fn mandar(&self, instrucao: InstrucaoConexao) {
+        let mut ouvintes = self.ouvintes();
+        for canal in &ouvintes.canais {
+            let _ = canal.send(instrucao.clone());
+        }
+        ouvintes.instrucoes.push(instrucao);
+    }
+
+    fn cancelar(&self) {
+        self.cancelada.store(true, Ordering::SeqCst);
+        self.aviso_cancelamento.notify_waiters();
+    }
+
+    fn cancelada(&self) -> bool {
+        self.cancelada.load(Ordering::SeqCst)
+    }
+
+    /// Termina só quando o cancelamento foi pedido.
+    async fn esperar_cancelamento(&self) {
+        loop {
+            // Inscreve antes de olhar a marca, para não perder um aviso no meio.
+            let aviso = self.aviso_cancelamento.notified();
+            tokio::pin!(aviso);
+            aviso.as_mut().enable();
+            if self.cancelada() {
+                return;
+            }
+            aviso.await;
+        }
+    }
+
+    /// O resultado da conexão, quando ela termina.
+    async fn esperar_resultado(&self, tipo: TipoIntegracao) -> Resultado<Integracao> {
+        let mut receptor = self.resultado.subscribe();
+        let publicado = receptor
+            .wait_for(Option::is_some)
+            .await
+            .ok()
+            .and_then(|valor| valor.clone());
+        // O remetente vive com a conexão, que quem espera segura: sem resultado não
+        // acontece; se acontecer, é ERR-53, e não pânico.
+        publicado.unwrap_or_else(|| {
+            Err(ErroIntegracao::inesperada(
+                tipo.into(),
+                "a conexão em andamento parou sem resultado",
+            )
+            .into())
+        })
+    }
+}
+
+/// Fim de uma conexão: sai da guarda e publica o resultado. Se a conexão é largada no
+/// meio (o pedido foi abandonado), quem esperava recebe ERR-53, e não fica preso.
+struct FimDaConexao<'a> {
+    conexoes: &'a Mutex<HashMap<TipoIntegracao, Arc<ConexaoEmAndamento>>>,
+    tipo: TipoIntegracao,
+    conexao: Arc<ConexaoEmAndamento>,
+}
+
+impl FimDaConexao<'_> {
+    fn concluir(self, resultado: Resultado<Integracao>) {
+        self.sair_da_guarda();
+        self.conexao.resultado.send_replace(Some(resultado));
+    }
+
+    fn sair_da_guarda(&self) {
+        let mut conexoes = self.conexoes.lock().unwrap_or_else(|e| e.into_inner());
+        if conexoes
+            .get(&self.tipo)
+            .is_some_and(|c| Arc::ptr_eq(c, &self.conexao))
+        {
+            conexoes.remove(&self.tipo);
+        }
+    }
+}
+
+impl Drop for FimDaConexao<'_> {
+    fn drop(&mut self) {
+        if self.conexao.resultado.borrow().is_some() {
+            return;
+        }
+        self.sair_da_guarda();
+        let erro = ErroIntegracao::inesperada(self.tipo.into(), "a conexão parou no meio");
+        self.conexao.resultado.send_replace(Some(Err(erro.into())));
+    }
+}
+
+/// Manda as instruções da conexão a todos que pediram "Conectar".
+struct ObservadorConexoes(Arc<ConexaoEmAndamento>);
+
+impl ObservadorConexao for ObservadorConexoes {
     fn instrucao(&self, instrucao: InstrucaoCore) {
-        // Tela fechada no meio da conexão: a conexão segue; a instrução se perde.
-        let _ = self.0.send(instrucao.into());
+        self.0.mandar(instrucao.into());
+    }
+}
+
+/// O que o `conectar` cancelado pelo "Desconectar" devolve: o estado que o núcleo guarda
+/// (`desconectado`; no GitHub, o ERR-02 cancelado, cujo estado final é `desconectado`).
+fn estado_cancelado(tipo: TipoIntegracao) -> Resultado<Integracao> {
+    match tipo {
+        TipoIntegracao::GitHub => {
+            Err(ErroIntegracao::GithubOauthNaoConcluido(MotivoOauthNaoConcluido::Cancelado).into())
+        }
+        _ => Ok(EstadoIntegracao::novo(tipo.into(), StatusCore::Desconectado).into()),
     }
 }
 
@@ -203,12 +406,40 @@ impl Nucleo for NucleoMyHarness {
         tipo: TipoIntegracao,
         instrucoes: Channel<InstrucaoConexao>,
     ) -> Resultado<Integracao> {
-        self.integracoes
-            .conectar(tipo.into(), Arc::new(ObservadorCanal(instrucoes)))
-            .await
-            .map(Into::into)
+        let (conexao, nova) = {
+            let mut conexoes = self.conexoes();
+            match conexoes.get(&tipo) {
+                Some(conexao) => {
+                    conexao.juntar(instrucoes);
+                    (conexao.clone(), false)
+                }
+                None => {
+                    let conexao = Arc::new(ConexaoEmAndamento::nova(instrucoes));
+                    conexoes.insert(tipo, conexao.clone());
+                    (conexao, true)
+                }
+            }
+        };
+        if nova {
+            return self.conduzir(tipo, conexao).await;
+        }
+        let tipo_core: TipoCore = tipo.into();
+        (self.operacoes)(&format!(
+            "conectar {tipo_core} repetido: reaproveita a conexão em andamento (UC-01 FA-02)"
+        ));
+        conexao.esperar_resultado(tipo).await
     }
     async fn desconectar_integracao(&self, tipo: TipoIntegracao) -> Resultado<Integracao> {
+        let em_andamento = self.conexoes().get(&tipo).cloned();
+        if let Some(conexao) = em_andamento {
+            let tipo_core: TipoCore = tipo.into();
+            (self.operacoes)(&format!(
+                "desconectar {tipo_core} durante a conexão: cancela a conexão em andamento"
+            ));
+            conexao.cancelar();
+            // A conexão para antes do "Desconectar": o estado dela não passa por cima.
+            let _ = conexao.esperar_resultado(tipo).await;
+        }
         self.integracoes
             .desconectar(tipo.into())
             .await
