@@ -12,8 +12,9 @@
 //! 3. portão: `--settings` com o gancho `PreToolUse` que chama o `harness-gate`;
 //! 4. ambiente sem token do GitHub ([`ambiente_sem_token_do_github`]).
 //!
-//! Também: `--setting-sources ""` (nenhuma configuração pessoal), `--mcp-config` com
-//! `--strict-mcp-config` quando houver MCP, `--add-dir` por pasta extra e
+//! Também: `--setting-sources ""` (nenhuma configuração pessoal), `--mcp-config` quando
+//! houver MCP, `--strict-mcp-config` sempre (só o MCP da especificação, nunca o do usuário
+//! ou do projeto; sem `mcp_config`, nenhum), `--add-dir` por pasta extra e
 //! `--append-system-prompt` com o prompt do papel (RN-25). O prompt da tarefa vem por
 //! último, depois de `--`, para nunca ser lido como opção.
 
@@ -122,8 +123,8 @@ where
     lista(&mut a, "--add-dir", &pastas);
     if let Some(mcp) = mcp {
         par(&mut a, "--mcp-config", mcp);
-        a.push("--strict-mcp-config".into());
     }
+    a.push("--strict-mcp-config".into());
     par(&mut a, "--append-system-prompt", &e.prompt_do_papel);
     a.push("--".into());
     a.push(e.prompt_da_tarefa.clone());
@@ -150,7 +151,10 @@ fn lista<S: AsRef<str>>(a: &mut Vec<String>, opcao: &str, itens: &[S]) {
 
 /// JSON do `--settings`: gancho `PreToolUse` para toda ferramenta, chamando o portão.
 /// O caminho vai entre aspas duplas, porque a CLI roda o gancho por um shell; os
-/// caracteres que o shell interpretaria já foram recusados em [`caminho`].
+/// caracteres que o shell interpretaria já foram recusados em [`caminho`]. Dentro das
+/// aspas duplas do `sh`, `\` só escapa `$`, `` ` ``, `"`, `\` e a quebra de linha: com
+/// esses recusados e sem `\` no fim nem dobrado, todo `\` que sobra (ex.: caminho do
+/// Windows) chega literal.
 fn configuracao_do_portao(portao: &str) -> String {
     serde_json::json!({
         "hooks": {
@@ -207,6 +211,8 @@ fn validar_modelo(modelo: &str) -> Result<(), ErroMontagem> {
 
 fn validar_ferramentas(permitidas: &[String], proibidas: &[String]) -> Result<(), ErroMontagem> {
     let mascarada = |f: &str| TextoMascarado::new(f);
+    // Repetição e conflito sem diferenciar maiúsculas: `Read` e `read` são a mesma.
+    let chave = |f: &str| f.to_lowercase();
     for lista in [permitidas, proibidas] {
         let mut vistas = HashSet::new();
         for f in lista {
@@ -215,7 +221,7 @@ fn validar_ferramentas(permitidas: &[String], proibidas: &[String]) -> Result<()
                     ferramenta: mascarada(f),
                 });
             }
-            if !vistas.insert(f.as_str()) {
+            if !vistas.insert(chave(f)) {
                 return Err(ErroMontagem::FerramentaRepetida {
                     ferramenta: mascarada(f),
                 });
@@ -227,11 +233,11 @@ fn validar_ferramentas(permitidas: &[String], proibidas: &[String]) -> Result<()
             ferramenta: mascarada(f),
         });
     }
-    let nomes_proibidos: HashSet<&str> = proibidas.iter().map(String::as_str).collect();
+    let nomes_proibidos: HashSet<String> = proibidas.iter().map(|f| chave(f)).collect();
     if let Some(f) = permitidas
         .iter()
         .map(|f| nome_da_ferramenta(f))
-        .find(|n| nomes_proibidos.contains(n))
+        .find(|n| nomes_proibidos.contains(&chave(n)))
     {
         return Err(ErroMontagem::PermitidaEProibida {
             ferramenta: mascarada(f),
@@ -254,7 +260,8 @@ fn validar_pastas(pastas: &[std::path::PathBuf]) -> Result<Vec<&str>, ErroMontag
 }
 
 /// Caminho aceito: não vazio, UTF-8, absoluto e sem caractere de controle. O portão, que
-/// vai para o shell do gancho, também não aceita `"`, `` ` ``, `$`, `%` nem `!`.
+/// vai para o shell do gancho, também não aceita `"`, `` ` ``, `$`, `%` nem `!`, nem `\`
+/// no fim ou seguido de outro `\` (ver [`configuracao_do_portao`]).
 fn caminho(p: &Path, campo: CampoCaminho) -> Result<&str, ErroMontagem> {
     let erro = |motivo| ErroMontagem::CaminhoInvalido { campo, motivo };
     if p.as_os_str().is_empty() {
@@ -267,6 +274,9 @@ fn caminho(p: &Path, campo: CampoCaminho) -> Result<&str, ErroMontagem> {
     };
     if texto.chars().any(proibido) {
         return Err(erro(MotivoCaminho::CaractereProibido));
+    }
+    if campo == CampoCaminho::Portao && (texto.ends_with('\\') || texto.contains("\\\\")) {
+        return Err(erro(MotivoCaminho::BarraInvertida));
     }
     if !p.is_absolute() {
         return Err(erro(MotivoCaminho::Relativo));
@@ -352,6 +362,7 @@ mod tests {
             "--add-dir",
             &a,
             &b,
+            "--strict-mcp-config",
             "--append-system-prompt",
             "Você é o implementador.",
             "--",
@@ -389,13 +400,18 @@ mod tests {
             .position(|a| a == "--mcp-config")
             .unwrap();
         assert_eq!(c.argumentos()[i + 2], "--strict-mcp-config");
-        assert!(
-            !montar(&spec())
-                .unwrap()
-                .argumentos()
-                .iter()
-                .any(|a| a.contains("mcp-config"))
-        );
+    }
+
+    #[test]
+    fn strict_mcp_config_sempre_mesmo_sem_mcp() {
+        let c = montar(&spec()).unwrap();
+        let strict = c
+            .argumentos()
+            .iter()
+            .filter(|a| *a == "--strict-mcp-config")
+            .count();
+        assert_eq!(strict, 1);
+        assert!(!c.argumentos().iter().any(|a| a == "--mcp-config"));
     }
 
     #[test]
@@ -505,15 +521,50 @@ mod tests {
             Err(ErroMontagem::ProibidaComRegra { .. })
         ));
 
-        for proibida in ["Read", "Bash", "mcp__obsidian-cli__obsidian_read"] {
+        for proibida in [
+            "Read",
+            "Bash",
+            "mcp__obsidian-cli__obsidian_read",
+            "read",
+            "BASH",
+            "MCP__Obsidian-CLI__obsidian_read",
+        ] {
             let mut e = spec();
             e.ferramentas_proibidas.push(proibida.into());
             assert_eq!(
                 montar(&e).unwrap_err(),
                 ErroMontagem::PermitidaEProibida {
-                    ferramenta: TextoMascarado::new(proibida)
+                    ferramenta: TextoMascarado::new(nome_da_ferramenta(
+                        e.ferramentas_permitidas
+                            .iter()
+                            .find(|f| nome_da_ferramenta(f).eq_ignore_ascii_case(proibida))
+                            .unwrap()
+                    ))
                 },
                 "{proibida}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeticao_ignora_maiusculas() {
+        for (lista_permitida, extra) in [
+            (true, "read"),
+            (true, "bash(cargo TEST:*)"),
+            (false, "webfetch"),
+        ] {
+            let mut e = spec();
+            if lista_permitida {
+                e.ferramentas_permitidas.push(extra.into());
+            } else {
+                e.ferramentas_proibidas.push(extra.into());
+            }
+            assert_eq!(
+                montar(&e).unwrap_err(),
+                ErroMontagem::FerramentaRepetida {
+                    ferramenta: TextoMascarado::new(extra)
+                },
+                "{extra}"
             );
         }
     }
@@ -557,12 +608,60 @@ mod tests {
             );
         }
 
+        for nome in ["gate\\", "ga\\\\te", "gate\\\\"] {
+            let mut e = spec();
+            e.portao = abs(nome);
+            assert_eq!(
+                montar(&e).unwrap_err(),
+                erro(CampoCaminho::Portao, MotivoCaminho::BarraInvertida),
+                "{nome:?}"
+            );
+        }
+        // Mesmo recusado no portão, `\` no fim de pasta extra não vai para shell: passa.
+        let mut e = spec();
+        e.pastas_extras.push(abs("pasta\\"));
+        assert!(montar(&e).is_ok());
+
         let mut e = spec();
         e.mcp_config = Some(PathBuf::new());
         assert_eq!(
             montar(&e).unwrap_err(),
             erro(CampoCaminho::McpConfig, MotivoCaminho::Vazio)
         );
+    }
+
+    /// O comando do gancho, lido pelo `sh` de verdade, vira exatamente o caminho do portão:
+    /// `\` no meio (Windows), espaço e metacaracteres que não foram recusados chegam literais.
+    #[cfg(unix)]
+    #[test]
+    fn comando_do_portao_e_seguro_no_sh() {
+        for portao in [
+            "/tmp/gate",
+            "/tmp/ga\\te",
+            "/C:\\Users\\eu\\harness gate.exe",
+            "/tmp/a\\nb\\tc",
+            "/tmp/x;rm -rf ~ &|<>*?'(){}#~",
+            "/tmp/\\'\\ \\*",
+        ] {
+            let mut e = spec();
+            e.portao = PathBuf::from(portao);
+            let c = montar(&e).unwrap();
+            let json: serde_json::Value = serde_json::from_str(valor(&c, "--settings")).unwrap();
+            let comando = json["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+                .as_str()
+                .unwrap();
+            let saida = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("printf '%s' {comando}"))
+                .output()
+                .unwrap();
+            assert!(saida.status.success(), "{portao:?}: {saida:?}");
+            assert_eq!(
+                String::from_utf8(saida.stdout).unwrap(),
+                portao,
+                "{portao:?}"
+            );
+        }
     }
 
     #[cfg(unix)]
