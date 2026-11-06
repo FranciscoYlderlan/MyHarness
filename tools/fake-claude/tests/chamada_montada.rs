@@ -44,6 +44,14 @@ fn fake_devolve_os_argumentos_montados_em_stream_json() {
     let mut pai: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     pai.push(("GITHUB_TOKEN".into(), "ghp_naoDeveChegar".into()));
     pai.push(("GH_TOKEN".into(), "gho_naoDeveChegar".into()));
+    pai.push((
+        "MH_TESTE_REPO_URL".into(),
+        "https://x-access-token:ghs_abcdefabcdef@github.com/o/r".into(),
+    ));
+    pai.push((
+        "MH_TESTE_GIT_CONFIG_VALUE".into(),
+        "Authorization: bearer ghp_abc".into(),
+    ));
     pai.push(("MEU_TESTE_FICA".into(), "1".into()));
     let chamada = montar_chamada(&especificacao(), pai).unwrap();
 
@@ -77,6 +85,18 @@ fn fake_devolve_os_argumentos_montados_em_stream_json() {
     let pasta =
         PathBuf::from(recebidos[recebidos.iter().position(|a| *a == "--add-dir").unwrap() + 1]);
     assert_eq!(pasta, std::env::temp_dir().join("pasta com espaço"));
+    let mcp = recebidos.iter().position(|a| *a == "--mcp-config").unwrap();
+    assert_eq!(
+        PathBuf::from(recebidos[mcp + 1]),
+        std::env::temp_dir().join("mcp.json")
+    );
+    assert_eq!(
+        recebidos
+            .iter()
+            .filter(|a| **a == "--strict-mcp-config")
+            .count(),
+        1
+    );
 
     let env: Vec<&str> = eventos[1]["env"]
         .as_array()
@@ -86,12 +106,37 @@ fn fake_devolve_os_argumentos_montados_em_stream_json() {
         .collect();
     assert!(env.contains(&"MEU_TESTE_FICA"), "{env:?}");
     assert!(
-        !env.iter()
-            .any(|n| n.eq_ignore_ascii_case("GITHUB_TOKEN") || n.eq_ignore_ascii_case("GH_TOKEN")),
+        !env.iter().any(|n| {
+            [
+                "GITHUB_TOKEN",
+                "GH_TOKEN",
+                "MH_TESTE_REPO_URL",
+                "MH_TESTE_GIT_CONFIG_VALUE",
+            ]
+            .iter()
+            .any(|t| n.eq_ignore_ascii_case(t))
+        }),
         "{env:?}"
     );
 
     assert_eq!(eventos[2]["type"], "result");
     assert_eq!(eventos[2]["subtype"], "success");
     assert_eq!(eventos[2]["is_error"], false);
+}
+
+#[test]
+fn sem_mcp_a_chamada_ainda_leva_strict_mcp_config() {
+    let mut e = especificacao();
+    e.mcp_config = None;
+    let chamada = montar_chamada(&e, std::env::vars_os()).unwrap();
+    let eventos = rodar(&chamada);
+    let recebidos: Vec<&str> = eventos[1]["args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert_eq!(recebidos, chamada.argumentos());
+    assert!(recebidos.contains(&"--strict-mcp-config"), "{recebidos:?}");
+    assert!(!recebidos.contains(&"--mcp-config"), "{recebidos:?}");
 }
