@@ -14,30 +14,16 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { workspace = true }
 
 [dependencies]
-my-harness-core = { workspace = true }
+my-harness-app = { workspace = true }
 tauri = { workspace = true }
-tokio = { workspace = true, features = ["net", "process", "io-util", "time"] }
-sqlx = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
-async-trait = { workspace = true }
 specta = { workspace = true }
 specta-typescript = { workspace = true }
 tauri-specta = { workspace = true }
-# GitHub (RF-03): HTTPS com rustls + ring (sem aws-lc, que pede cmake/NASM no Windows).
-reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls-no-provider", "http2", "system-proxy"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-# Cofre de credenciais do SO (RNF-05, D12): Gerenciador de Credenciais no Windows.
-keyring = "4.2"
-
-# Matar a árvore de processos no tempo esgotado (infra/process): `kill` do grupo, sem `unsafe`.
-[target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["process"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["time", "test-util", "net", "io-util"] }
 
 [lints]
 workspace = true

@@ -2506,6 +2506,21 @@ dependencies = [
 name = "my-harness"
 version = "0.1.0"
 dependencies = [
+ "my-harness-app",
+ "serde",
+ "specta",
+ "specta-typescript",
+ "tauri",
+ "tauri-build",
+ "tauri-specta",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "my-harness-app"
+version = "0.1.0"
+dependencies = [
  "async-trait",
  "keyring",
  "my-harness-core",
@@ -2515,11 +2530,7 @@ dependencies = [
  "serde",
  "serde_json",
  "specta",
- "specta-typescript",
  "sqlx",
- "tauri",
- "tauri-build",
- "tauri-specta",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

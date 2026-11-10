@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "src-tauri", "tools/fake-claude"]
+members = ["crates/core", "crates/app", "src-tauri", "tools/fake-claude"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 my-harness-core = { path = "crates/core" }
+my-harness-app = { path = "crates/app" }
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

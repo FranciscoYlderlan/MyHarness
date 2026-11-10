@@ -26,7 +26,10 @@ const TOKEN: &str = "ghp_A1b2C3d4E5f6G7h8I9j0KlMnOpQrStUvWx";
 fn binario_fake() -> &'static Path {
     static CAMINHO: OnceLock<PathBuf> = OnceLock::new();
     CAMINHO.get_or_init(|| {
-        let raiz = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let raiz = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap();
         let alvo = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| raiz.join("target"));

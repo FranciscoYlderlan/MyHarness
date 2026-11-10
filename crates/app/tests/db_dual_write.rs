@@ -3,8 +3,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use my_harness_lib::infra::db::Database;
-use my_harness_lib::infra::db::dual_write::{
+use my_harness_app::infra::db::Database;
+use my_harness_app::infra::db::dual_write::{
     self, DualWriteError, LogTarget, VaultError, VaultSide,
 };
 use sqlx::AssertSqlSafe;

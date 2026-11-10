@@ -1,4 +1,4 @@
-use my_harness_lib::infra::db::{DB_FILE_NAME, Database};
+use my_harness_app::infra::db::{DB_FILE_NAME, Database};
 
 #[tokio::test]
 async fn open_creates_wal_database_and_runs_migrations() {
