@@ -97,10 +97,21 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
     [rodar],
   );
 
+  // O erro que já foi repetido: duplo clique em "Repetir" com o núcleo instantâneo chega
+  // depois da resposta e antes do React redesenhar, com o mesmo erro ainda na tela.
+  const repetido = useRef<Record<TipoIntegracao, unknown>>({
+    claude_cli: null,
+    obsidian_cli: null,
+    github: null,
+  });
+
   const repetir = useCallback(
     (tipo: TipoIntegracao) => {
       if (andamento.current[tipo] !== null) return;
-      const operacao = estadoRef.current[tipo].erro?.operacao ?? "checar";
+      const erro = estadoRef.current[tipo].erro;
+      if (erro !== null && repetido.current[tipo] === erro) return;
+      repetido.current[tipo] = erro;
+      const operacao = erro?.operacao ?? "checar";
       if (operacao === "conectar") conectar(tipo);
       else if (operacao === "desconectar") desconectar(tipo);
       else checar(tipo);

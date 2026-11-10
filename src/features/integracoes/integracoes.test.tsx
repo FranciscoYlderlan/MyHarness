@@ -7,6 +7,8 @@ import { MainWindow } from "@/app/main-window";
 import { mockCommands } from "@/bindings";
 import type { IntegracaoMudou } from "@/lib/ipc";
 import { estadoInicial, reduzir } from "./estado";
+import { ProvedorDeIntegracoes, useIntegracoes } from ".";
+import type { Integracoes } from "./contexto";
 import {
   criarNucleoSimuladoDeIntegracoes,
   erroDoCatalogo,
@@ -572,6 +574,43 @@ describe("guarda de operação em andamento", () => {
 
     act(() => liberar!());
     await waitFor(() => expect(c).toHaveAttribute("data-situacao", "conectado"));
+    expect(testesDoGithub).toBe(antes + 1);
+  });
+
+  it("duplo clique em Repetir com o núcleo instantâneo chama testar uma vez", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes(todasConectadas);
+    let testesDoGithub = 0;
+    mockCommands({
+      ...nucleo.handlers,
+      testarIntegracao: (args) => {
+        if (args.tipo === "github") testesDoGithub += 1;
+        return nucleo.handlers.testarIntegracao!(args);
+      },
+    });
+    nucleo.falharChecagem("github", falhaInesperada("github", "erro de rede"));
+    const tela: { atual: Integracoes | null } = { atual: null };
+    function Espiao() {
+      tela.atual = useIntegracoes();
+      return null;
+    }
+    render(
+      <ProvedorDeIntegracoes>
+        <Espiao />
+      </ProvedorDeIntegracoes>,
+    );
+    await waitFor(() => expect(tela.atual!.estado.github.integracao).not.toBeNull());
+    act(() => tela.atual!.checar("github"));
+    await waitFor(() => expect(tela.atual!.estado.github.erro).not.toBeNull());
+    const antes = testesDoGithub;
+
+    nucleo.definir("github", { status: "conectado", conta: "FranciscoYlderlan", erro: null });
+    // O primeiro clique termina (a resposta do núcleo chega) antes do React redesenhar: o
+    // segundo clique cai no mesmo botão, com o mesmo erro na tela.
+    const { repetir } = tela.atual!;
+    repetir("github");
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+    repetir("github");
+    await waitFor(() => expect(tela.atual!.estado.github.integracao?.status).toBe("conectado"));
     expect(testesDoGithub).toBe(antes + 1);
   });
 });
