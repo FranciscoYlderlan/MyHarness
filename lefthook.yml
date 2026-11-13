@@ -1,5 +1,7 @@
 # Git hooks (installed by `pnpm install` through lefthook's postinstall).
+# pre-push runs the light check (crates without Tauri, plus the web check); the full
+# `pnpm check` runs once per task and in the CI.
 pre-push:
   jobs:
-    - name: check
-      run: pnpm check
+    - name: check:rapido
+      run: pnpm check:rapido
