@@ -53,6 +53,13 @@ export type NucleoSimuladoDeIntegracoes = {
   falharConexao: (tipo: TipoIntegracao, erro: ErroIpc) => void;
   /** Próximo `desconectar` falha com este erro; `null` limpa. */
   falharDesconexao: (tipo: TipoIntegracao, erro: ErroIpc | null) => void;
+  /**
+   * Integração que o núcleo não ligou, como o real: `listar` a devolve `desconectado`;
+   * `testar`, `conectar` e `desconectar` falham sempre com este erro (ERR-55). `null` liga.
+   */
+  desligar: (tipo: TipoIntegracao, erro: ErroIpc | null) => void;
+  /** `true` se a integração está desligada (ver `desligar`). */
+  desligada: (tipo: TipoIntegracao) => boolean;
 };
 
 /** Erro do catálogo no formato que o núcleo devolve num comando. */
@@ -70,6 +77,11 @@ export function falhaInesperada(tipo: TipoIntegracao, motivo: string): ErroIpc {
     integracao: NOMES[tipo],
     motivo,
   });
+}
+
+/** ERR-55 com o motivo, como o núcleo real o devolve (ex.: integração não ligada). */
+export function falhaInterna(motivo: string): ErroIpc {
+  return erroDoCatalogo("FALHA_INTERNA", "ERR-55", { motivo });
 }
 
 export function criarNucleoSimuladoDeIntegracoes(
@@ -94,6 +106,11 @@ export function criarNucleoSimuladoDeIntegracoes(
   const falhasDeDesconexao = new Map<TipoIntegracao, ErroIpc>();
   const roteiros = new Map<TipoIntegracao, RoteiroDeConexao>();
   const pendentes = new Map<TipoIntegracao, Pendente>();
+  const desligadas = new Map<TipoIntegracao, ErroIpc>();
+  const exigirLigada = (tipo: TipoIntegracao) => {
+    const erro = desligadas.get(tipo);
+    if (erro) throw erro;
+  };
 
   const estado = (tipo: TipoIntegracao): Integracao => ({ ...estados.get(tipo)! });
 
@@ -102,8 +119,14 @@ export function criarNucleoSimuladoDeIntegracoes(
   };
 
   const handlers: Partial<MockCommandHandlers> = {
-    listarIntegracoes: () => ORDEM.map(estado),
+    listarIntegracoes: () =>
+      ORDEM.map((tipo) =>
+        desligadas.has(tipo)
+          ? { ...estado(tipo), status: "desconectado" as const, conta: null, erro: null }
+          : estado(tipo),
+      ),
     testarIntegracao: ({ tipo }) => {
+      exigirLigada(tipo);
       const falha = falhasDeChecagem.get(tipo);
       if (falha) {
         falhasDeChecagem.delete(tipo);
@@ -120,6 +143,7 @@ export function criarNucleoSimuladoDeIntegracoes(
       return estado(tipo);
     },
     conectarIntegracao: ({ tipo, instrucoes }) => {
+      exigirLigada(tipo);
       const roteiro = roteiros.get(tipo) ?? { instrucoes: [] };
       roteiros.delete(tipo);
       for (const instrucao of roteiro.instrucoes) instrucoes.onmessage(instrucao);
@@ -137,6 +161,7 @@ export function criarNucleoSimuladoDeIntegracoes(
       });
     },
     desconectarIntegracao: ({ tipo }) => {
+      exigirLigada(tipo);
       const falha = falhasDeDesconexao.get(tipo);
       if (falha) {
         falhasDeDesconexao.delete(tipo);
@@ -181,5 +206,10 @@ export function criarNucleoSimuladoDeIntegracoes(
       if (erro) falhasDeDesconexao.set(tipo, erro);
       else falhasDeDesconexao.delete(tipo);
     },
+    desligar: (tipo, erro) => {
+      if (erro) desligadas.set(tipo, erro);
+      else desligadas.delete(tipo);
+    },
+    desligada: (tipo) => desligadas.has(tipo),
   };
 }
