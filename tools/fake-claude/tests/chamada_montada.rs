@@ -53,6 +53,17 @@ fn fake_devolve_os_argumentos_montados_em_stream_json() {
         "Authorization: bearer ghp_abc".into(),
     ));
     pai.push(("MEU_TESTE_FICA".into(), "1".into()));
+    // O PATH do pai, com uma pasta que traz token do GitHub no meio.
+    let pastas_do_pai: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .filter(|p| !p.as_os_str().is_empty())
+        .collect();
+    let com_token = std::env::temp_dir()
+        .join("ghp_naoDeveChegarPath")
+        .join("bin");
+    let mut path_do_pai = pastas_do_pai.clone();
+    path_do_pai.insert(path_do_pai.len().min(1), com_token);
+    pai.retain(|(n, _)| !n.eq_ignore_ascii_case("PATH"));
+    pai.push(("PATH".into(), std::env::join_paths(&path_do_pai).unwrap()));
     let chamada = montar_chamada(&especificacao(), pai).unwrap();
 
     let eventos = rodar(&chamada);
@@ -118,6 +129,16 @@ fn fake_devolve_os_argumentos_montados_em_stream_json() {
         }),
         "{env:?}"
     );
+
+    // O PATH chega ao processo sem a pasta com token, com as outras na mesma ordem.
+    assert!(env.contains(&"PATH"), "{env:?}");
+    let path_recebido: Vec<PathBuf> = eventos[1]["path"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| PathBuf::from(p.as_str().unwrap()))
+        .collect();
+    assert_eq!(path_recebido, pastas_do_pai);
 
     assert_eq!(eventos[2]["type"], "result");
     assert_eq!(eventos[2]["subtype"], "success");

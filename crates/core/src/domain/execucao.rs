@@ -8,7 +8,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::segredo::{MASCARA, TextoMascarado, contem_token_do_github};
 
@@ -35,10 +35,11 @@ pub struct EspecificacaoExecucao {
     pub mcp_config: Option<PathBuf>,
 }
 
-/// `Debug` mascarado: prompts e nomes podem trazer texto colado pelo Humano (RN-04).
+/// `Debug` mascarado: prompts, nomes e caminhos podem trazer texto colado pelo Humano (RN-04).
 impl fmt::Debug for EspecificacaoExecucao {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let m = |t: &str| TextoMascarado::new(t);
+        let caminho = |p: &Path| m(&p.to_string_lossy());
         let lista = |v: &[String]| v.iter().map(|t| m(t)).collect::<Vec<_>>();
         f.debug_struct("EspecificacaoExecucao")
             .field("papel", &m(&self.papel))
@@ -50,9 +51,16 @@ impl fmt::Debug for EspecificacaoExecucao {
                 &lista(&self.ferramentas_permitidas),
             )
             .field("ferramentas_proibidas", &lista(&self.ferramentas_proibidas))
-            .field("pastas_extras", &self.pastas_extras)
-            .field("portao", &self.portao)
-            .field("mcp_config", &self.mcp_config)
+            .field(
+                "pastas_extras",
+                &self
+                    .pastas_extras
+                    .iter()
+                    .map(|p| caminho(p))
+                    .collect::<Vec<_>>(),
+            )
+            .field("portao", &caminho(&self.portao))
+            .field("mcp_config", &self.mcp_config.as_deref().map(caminho))
             .finish()
     }
 }
@@ -209,15 +217,44 @@ pub(crate) fn ferramenta_valida(ferramenta: &str) -> bool {
 /// e toda variável cujo valor **contém**, em qualquer posição, um token do GitHub pela regra
 /// da máscara ([`contem_token_do_github`]: `ghp_`, `github_pat_`… seguido de pelo menos 1
 /// caractere de token), como `https://x-access-token:ghs_…@github.com/o/r` ou
-/// `Authorization: bearer ghp_…`. O resto passa na ordem recebida.
+/// `Authorization: bearer ghp_…`.
+///
+/// Exceção: no `PATH` (nome sem diferenciar maiúsculas: `PATH`, `Path` no Windows) sai só
+/// cada pasta cujo texto contém token do GitHub; as outras ficam, na mesma ordem, com o
+/// separador do SO (`;` no Windows, `:` no resto). Sem pasta com token, o valor fica
+/// igual; com todas saindo, o `PATH` fica vazio, mas presente. O resto passa na ordem
+/// recebida.
 pub fn ambiente_sem_token_do_github<I>(ambiente: I) -> Vec<(OsString, OsString)>
 where
     I: IntoIterator<Item = (OsString, OsString)>,
 {
     ambiente
         .into_iter()
-        .filter(|(nome, valor)| !nome_de_token_do_github(nome) && !valor_de_token_do_github(valor))
+        .filter(|(nome, _)| !nome_de_token_do_github(nome))
+        .filter_map(|(nome, valor)| {
+            if nome.eq_ignore_ascii_case("PATH") {
+                let valor = path_sem_token_do_github(valor);
+                Some((nome, valor))
+            } else if valor_de_token_do_github(&valor) {
+                None
+            } else {
+                Some((nome, valor))
+            }
+        })
         .collect()
+}
+
+/// `PATH` sem as pastas cujo texto contém token do GitHub, as outras na mesma ordem.
+fn path_sem_token_do_github(valor: OsString) -> OsString {
+    if !valor_de_token_do_github(&valor) {
+        return valor;
+    }
+    let limpas: Vec<_> = std::env::split_paths(&valor)
+        .filter(|pasta| !valor_de_token_do_github(pasta.as_os_str()))
+        .collect();
+    // `join_paths` só falha com pasta que traz `"` no Windows; sem como montá-la de volta
+    // igual, o `PATH` fica vazio (nunca com a pasta do token).
+    std::env::join_paths(limpas).unwrap_or_default()
 }
 
 fn nome_de_token_do_github(nome: &OsStr) -> bool {
@@ -398,6 +435,115 @@ mod tests {
         let ambiente = amb(&[("CHAVE", "sk-ant-x"), ("OUTRA", "valor")]);
         let texto = format!("{:?}", AmbienteMascarado(&ambiente));
         assert_eq!(texto, r#"{"CHAVE": ••••, "OUTRA": ••••}"#);
+    }
+
+    #[test]
+    fn debug_da_especificacao_mascara_os_caminhos() {
+        let spec = EspecificacaoExecucao {
+            papel: "implementador".into(),
+            prompt_do_papel: "papel".into(),
+            prompt_da_tarefa: "tarefa".into(),
+            modelo: "sonnet".into(),
+            ferramentas_permitidas: vec![],
+            ferramentas_proibidas: vec![],
+            pastas_extras: vec![
+                PathBuf::from("/tmp/ghp_SEGREDOpath"),
+                PathBuf::from("/tmp/limpa"),
+            ],
+            portao: PathBuf::from("/tmp/ghs_SEGREDOgate"),
+            mcp_config: Some(PathBuf::from("/tmp/gho_SEGREDOmcp/mcp.json")),
+        };
+        for texto in [format!("{spec:?}"), format!("{spec:#?}")] {
+            for vazado in [
+                "ghp_SEGREDOpath",
+                "ghs_SEGREDOgate",
+                "gho_SEGREDOmcp",
+                "SEGREDO",
+            ] {
+                assert!(!texto.contains(vazado), "{vazado}: {texto}");
+            }
+        }
+        let texto = format!("{spec:?}");
+        assert!(
+            texto.contains(r#"pastas_extras: ["/tmp/••••", "/tmp/limpa"]"#),
+            "{texto}"
+        );
+        assert!(texto.contains(r#"portao: "/tmp/••••""#), "{texto}");
+        assert!(
+            texto.contains(r#"mcp_config: Some("/tmp/••••/mcp.json")"#),
+            "{texto}"
+        );
+
+        let sem_mcp = EspecificacaoExecucao {
+            mcp_config: None,
+            ..spec
+        };
+        assert!(format!("{sem_mcp:?}").contains("mcp_config: None"));
+    }
+
+    fn path_filtrado(valor: &str) -> Vec<(OsString, OsString)> {
+        ambiente_sem_token_do_github(amb(&[("HOME", "/home/u"), ("PATH", valor), ("Z", "1")]))
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn path_perde_so_as_pastas_com_token() {
+        assert_eq!(
+            path_filtrado("/usr/bin:/opt/ghp_tools/bin:/bin"),
+            amb(&[("HOME", "/home/u"), ("PATH", "/usr/bin:/bin"), ("Z", "1")])
+        );
+        // prefixo em maiúsculas, em qualquer posição, e no começo e no fim
+        assert_eq!(
+            path_filtrado("/opt/GHS_abc:/usr/bin:/x/GitHub_Pat_abc/bin:/bin:/y/xgho_a"),
+            amb(&[("HOME", "/home/u"), ("PATH", "/usr/bin:/bin"), ("Z", "1")])
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn path_limpo_fica_igual_e_path_todo_sujo_fica_vazio_mas_presente() {
+        for limpo in [
+            "/usr/bin:/bin",
+            "/usr/bin",
+            "",
+            "/a::/b:",
+            "/ghs_/bin:/ghost",
+        ] {
+            assert_eq!(
+                path_filtrado(limpo),
+                amb(&[("HOME", "/home/u"), ("PATH", limpo), ("Z", "1")]),
+                "{limpo:?}"
+            );
+        }
+        assert_eq!(
+            path_filtrado("/opt/ghp_a:/opt/ghr_b"),
+            amb(&[("HOME", "/home/u"), ("PATH", ""), ("Z", "1")])
+        );
+    }
+
+    #[test]
+    fn path_com_outro_caso_no_nome_tambem_filtra() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let (limpa, suja) = if cfg!(windows) {
+            (r"C:\Windows", r"C:\ghp_tools\bin")
+        } else {
+            ("/usr/bin", "/opt/ghp_tools/bin")
+        };
+        for nome in ["PATH", "Path", "path"] {
+            let saida = ambiente_sem_token_do_github(amb(&[(
+                nome,
+                &format!("{limpa}{sep}{suja}{sep}{limpa}2"),
+            )]));
+            assert_eq!(
+                saida,
+                amb(&[(nome, &format!("{limpa}{sep}{limpa}2"))]),
+                "{nome}"
+            );
+        }
+        // Outra variável com lista de pastas segue a regra geral: sai inteira.
+        let saida =
+            ambiente_sem_token_do_github(amb(&[("PYTHONPATH", &format!("{limpa}{sep}{suja}"))]));
+        assert!(saida.is_empty(), "{saida:?}");
     }
 
     #[test]
