@@ -3,7 +3,9 @@
 //! Escreve no stdout, uma linha JSON por evento (estilo `--output-format stream-json`):
 //! 1. `{"type":"system","subtype":"init",…}` com o modelo e o modo de permissão recebidos;
 //! 2. `{"type":"fake_args","args":[…],"env":[…]}` com os argumentos recebidos, na ordem,
-//!    e os nomes (nunca os valores) das variáveis de ambiente, em ordem alfabética;
+//!    os nomes (nunca os valores) das variáveis de ambiente, em ordem alfabética, e em
+//!    `path` as pastas do `PATH` recebido, na ordem (o único valor de ambiente que sai,
+//!    para conferir o filtro da camada 4; `null` sem `PATH`);
 //! 3. `{"type":"result","subtype":"success",…}` final. Sai com código 0.
 
 use std::io::{self, Write};
@@ -21,6 +23,11 @@ fn main() -> io::Result<()> {
         .map(|(nome, _)| nome.to_string_lossy().into_owned())
         .collect();
     env.sort();
+    let path: Value = std::env::var_os("PATH").map_or(Value::Null, |valor| {
+        std::env::split_paths(&valor)
+            .map(|p| Value::String(p.to_string_lossy().into_owned()))
+            .collect()
+    });
 
     let depois = |opcao: &str| -> Value {
         args.iter()
@@ -37,7 +44,7 @@ fn main() -> io::Result<()> {
             "model": depois("--model"),
             "permissionMode": depois("--permission-mode"),
         }),
-        json!({ "type": "fake_args", "args": args, "env": env }),
+        json!({ "type": "fake_args", "args": args, "env": env, "path": path }),
         json!({
             "type": "result",
             "subtype": "success",
