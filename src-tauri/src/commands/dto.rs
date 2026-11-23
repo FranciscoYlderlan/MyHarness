@@ -157,6 +157,10 @@ id!(
     ExecucaoId
 );
 id!(
+    /// Id de um Relatório (ENT-09).
+    RelatorioId
+);
+id!(
     /// Id de um Achado (ENT-10).
     AchadoId
 );
@@ -328,14 +332,21 @@ pub enum NomePapel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Tarefa {
     pub id: TarefaId,
-    /// 1 a 500 caracteres (ERR-49).
+    /// O plano da tarefa (ENT-05).
+    pub plano: PlanoId,
+    /// 1 a 500 caracteres (ERR-49); vazio ou longo só com `incompleta = true`.
     pub faz: String,
     /// Caminhos relativos ao repositório.
     pub toca_em: Vec<String>,
     pub depende_de: Vec<TarefaId>,
     pub paralelo: bool,
+    /// Vazio só com `incompleta = true` (ERR-49).
     pub pronto_quando: String,
+    /// Vazio só com `incompleta = true` (ERR-49).
     pub prova: String,
+    /// Marcada na 3ª devolução do plano (ERR-49); "Aprovar" fica bloqueado enquanto
+    /// houver tarefa com `incompleta = true`. Padrão: `false`.
+    pub incompleta: bool,
     /// Na tarefa, nunca `orquestrador`.
     pub papel: NomePapel,
     /// Sem modelo, vale o `modelo_padrao` do papel (RN-07).
@@ -357,6 +368,7 @@ pub enum StatusExecucao {
     /// "na fila" no contrato.
     NaFila,
     Rodando,
+    /// No fio, `concluido` (ASCII, como todo enum da IPC) = "concluído" do contrato (M-38).
     Concluido,
     Falhou,
     Interrompida,
@@ -417,6 +429,59 @@ pub struct PromptPapel {
 }
 
 // ---------------------------------------------------------------------------
+// ENT-09 Relatório e ENT-24 Critério
+// ---------------------------------------------------------------------------
+
+/// `resultado` de ENT-09.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultadoRelatorio {
+    /// No fio, `concluido` (ASCII, como todo enum da IPC) = "concluído" do contrato (M-38).
+    Concluido,
+    Falhou,
+    Bloqueado,
+}
+
+/// `status` de ENT-24, em ASCII no fio; a tela mostra o texto do contrato.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusCriterio {
+    /// ✔ no contrato; só com `prova` (ERR-20).
+    Passou,
+    /// ✘ no contrato (inclusive ✘ "sem prova").
+    Falhou,
+    /// "não verificado, presumido" no contrato.
+    NaoVerificadoPresumido,
+}
+
+/// ENT-24 Critério.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Criterio {
+    pub status: StatusCriterio,
+    /// Saída de teste, captura ou resposta; obrigatória para `passou` (ERR-20).
+    pub prova: Option<String>,
+}
+
+/// ENT-09 Relatório. Sem comando nem evento que o leve por ora: só o tipo do contrato.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Relatorio {
+    pub id: RelatorioId,
+    /// A execução que devolveu o relatório (ENT-07).
+    pub execucao: ExecucaoId,
+    pub resultado: ResultadoRelatorio,
+    /// Até 1,5 mil tokens no total (RNF-10).
+    pub o_que_fez: String,
+    pub arquivos: Vec<String>,
+    pub prova: String,
+    /// Obrigatório quando `execucao.papel = teste`.
+    pub criterios: Vec<Criterio>,
+    pub duvidas: Vec<String>,
+    pub candidatos_a_nota: Vec<String>,
+    /// Vazio até o registro; preenchido antes da próxima delegação (RN-03, ERR-15).
+    pub registrado_em: Option<DataHoraUtc>,
+}
+
+// ---------------------------------------------------------------------------
 // ENT-10 Achado
 // ---------------------------------------------------------------------------
 
@@ -449,11 +514,14 @@ pub enum StatusAchado {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Achado {
     pub id: AchadoId,
+    /// A execução que achou (ENT-07).
+    pub execucao: ExecucaoId,
     pub tipo: TipoAchado,
     pub passos: Vec<String>,
     pub esperado: String,
     pub obtido: String,
-    /// Caminho da imagem; obrigatório para adversarial (ERR-43 se não abrir).
+    /// Caminho da imagem; obrigatório quando `execucao.papel = adversarial` (ERR-43 se não
+    /// abrir).
     pub captura: Option<String>,
     /// Bug: sempre `corrigir`. Sugestão: obrigatória ao fechar a rodada (ERR-28).
     pub decisao: Option<DecisaoAchado>,
@@ -739,6 +807,12 @@ mod tests {
         assert_eq!(j(&TipoIntegracao::ClaudeCli), "\"claude_cli\"");
         assert_eq!(j(&StatusChat::SoLeitura), "\"so_leitura\"");
         assert_eq!(j(&StatusExecucao::NaFila), "\"na_fila\"");
+        assert_eq!(j(&StatusExecucao::Concluido), "\"concluido\"");
+        assert_eq!(j(&ResultadoRelatorio::Concluido), "\"concluido\"");
+        assert_eq!(
+            j(&StatusCriterio::NaoVerificadoPresumido),
+            "\"nao_verificado_presumido\""
+        );
         assert_eq!(j(&FluxoPrompt::PassagemDeTurno), "\"passagem_de_turno\"");
         assert_eq!(j(&StatusConsumo::AllowedWarning), "\"allowed_warning\"");
     }

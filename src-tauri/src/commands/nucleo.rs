@@ -163,8 +163,8 @@ impl Nucleo for NucleoProvisorio {
     ) -> Resultado<Integracao> {
         nao_implementado()
     }
-    async fn desconectar_integracao(&self, tipo: TipoIntegracao) -> Resultado<Integracao> {
-        Ok(nao_verificada(tipo))
+    async fn desconectar_integracao(&self, _tipo: TipoIntegracao) -> Resultado<Integracao> {
+        nao_implementado()
     }
 
     async fn ler_consumo(&self) -> Resultado<Consumo> {
@@ -364,11 +364,18 @@ mod tests {
             }
         );
         assert!(n.listar_projetos().await.unwrap().is_empty());
+        let nao_implementado = ErroIpc::Interno {
+            motivo: MotivoInterno::NaoImplementado,
+        };
         assert_eq!(
             n.aprovar_plano(PlanoId("p1".into())).await.unwrap_err(),
-            ErroIpc::Interno {
-                motivo: MotivoInterno::NaoImplementado
-            }
+            nao_implementado
+        );
+        assert_eq!(
+            n.desconectar_integracao(TipoIntegracao::GitHub)
+                .await
+                .unwrap_err(),
+            nao_implementado
         );
     }
 }
