@@ -1,6 +1,6 @@
 // Testes de componente da TEL-02 e do CMP-03 contra o núcleo simulado das integrações,
 // pelo mesmo contrato IPC (`mockCommands` dos bindings).
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, render, screen, waitFor, within } from "@testing-library/react";
 import { emit } from "@tauri-apps/api/event";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { MainWindow } from "@/app/main-window";
@@ -17,6 +17,10 @@ import {
 } from "@/lib/ipc/nucleo-simulado-integracoes";
 
 afterEach(() => clearMocks());
+
+// Cada ação do cartão fica em carregando pelo menos o tempo mínimo contra duplo clique
+// (500 ms): o `waitFor` espera mais que o padrão de 1 s, para várias ações seguidas.
+configure({ asyncUtilTimeout: 3000 });
 
 function iniciar(
   inicial: Parameters<typeof criarNucleoSimuladoDeIntegracoes>[0],
@@ -221,7 +225,8 @@ describe("TEL-02 integrações", () => {
       "href",
       "https://github.com/login/device",
     );
-    expect(within(c).queryByRole("button")).not.toBeInTheDocument();
+    // Durante o login os botões ficam no lugar, inativos (CMP-11 carregando: nenhuma ação).
+    for (const botao of within(c).getAllByRole("button")) expect(botao).toBeDisabled();
 
     act(() => nucleo.concluirConexao("github", { conta: "FranciscoYlderlan" }));
     await waitFor(() => expect(c).toHaveAttribute("data-situacao", "conectado"));
@@ -265,7 +270,7 @@ describe("TEL-02 integrações", () => {
     );
     act(() => within(c).getByRole("button", { name: "Repetir" }).click());
     await waitFor(() => expect(within(c).queryByRole("alert")).not.toBeInTheDocument());
-    expect(c).toHaveTextContent("desconectado");
+    await waitFor(() => expect(c).toHaveTextContent("desconectado"));
   });
 
   it("AC-88: Claude CLI sem login, o /login mostra as mensagens e conclui conectado", async () => {
@@ -494,6 +499,8 @@ describe("guarda de operação em andamento", () => {
     await screen.findByRole("dialog", { name: "Integrações" });
     const c = cartao("GitHub");
     const conectar = await within(c).findByRole("button", { name: "Conectar" });
+    // A checagem da abertura da TEL-02 deixa o botão inativo até acabar.
+    await waitFor(() => expect(conectar).toBeEnabled());
 
     nucleo.roteiroDeConexao("github", { instrucoes: [codigoDoDispositivo], aguardarHumano: true });
     act(() => conectar.click());
