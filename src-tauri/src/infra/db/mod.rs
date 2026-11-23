@@ -2,9 +2,14 @@
 //! versioned migrations (`src-tauri/migrations/`) applied on every open.
 //!
 //! `0002_contract_entities.sql` holds one table per contract entity that lives in SQLite
-//! (`Anexos/contrato/02-entidades.md`); [`dual_write`] writes the ones that also live in the vault.
+//! (`Anexos/contrato/02-entidades.md`) and `0003_contract_links_and_history.sql` brings it to
+//! M-37 to M-39 (required links, `incompleta`, `concluído`, `comandos`) and refuses `OR REPLACE`
+//! on prompt versions and runs; [`dual_write`] writes the ones that also live in the vault.
 
 pub mod dual_write;
+
+#[cfg(test)]
+mod tests;
 
 use std::path::{Path, PathBuf};
 

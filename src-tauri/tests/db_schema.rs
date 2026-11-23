@@ -31,10 +31,11 @@ async fn seeded() -> Fixture {
         "INSERT INTO cofre (id, projeto, nome, funcao, ativo, status) VALUES (1, 1, 'myHarness-vault', 'memoria', 1, 'conectado')",
         "INSERT INTO chat (id, projeto, limite_tokens, status) VALUES (1, 1, 100000, 'ativo')",
         "INSERT INTO chat (id, projeto, limite_tokens, status) VALUES (2, 1, 100000, 'encerrado')",
-        "INSERT INTO tarefa (id, faz, toca_em, paralelo, pronto_quando, prova, papel) VALUES (1, 'Esquema', '[\"src-tauri/migrations/\"]', 1, 'testes passam', 'cargo test', 'funcionalidade')",
+        "INSERT INTO plano_delegacao (id, chat, versao, status) VALUES (1, 1, 1, 'proposto')",
+        "INSERT INTO tarefa (id, plano, faz, toca_em, paralelo, pronto_quando, prova, papel) VALUES (1, 1, 'Esquema', '[\"src-tauri/migrations/\"]', 1, 'testes passam', 'cargo test', 'funcionalidade')",
         "INSERT INTO execucao (id, chat, tarefa, papel, modelo, prompt_versao, worktree, branch, status) VALUES (1, 1, 1, 'funcionalidade', 'opus', 1, '/w/t4', 'feat/RF-01-esquema', 'rodando')",
         "INSERT INTO execucao (id, chat, tarefa, papel, modelo, prompt_versao, status) VALUES (2, 1, 1, 'teste', 'opus', 1, 'rodando')",
-        "INSERT INTO relatorio (id, resultado, o_que_fez, prova) VALUES (1, 'concluído', 'migração', 'cargo test')",
+        "INSERT INTO relatorio (id, execucao, resultado, o_que_fez, prova) VALUES (1, 1, 'concluído', 'migração', 'cargo test')",
     ] {
         ok(f.pool(), sql).await;
     }
@@ -518,30 +519,32 @@ async fn plano_delegacao() {
 async fn tarefa() {
     let f = seeded().await;
     let p = f.pool();
-    let cols = "faz, toca_em, paralelo, pronto_quando, prova, papel";
+    let cols = "plano, faz, toca_em, paralelo, pronto_quando, prova, papel";
     let faz_500 = "f".repeat(500);
     let faz_501 = "f".repeat(501);
-    ok(p, &format!("INSERT INTO tarefa ({cols}) VALUES ('{faz_500}', '[\"a.rs\"]', 0, 'x', 'y', 'funcionalidade')")).await;
+    ok(p, &format!("INSERT INTO tarefa ({cols}) VALUES (1, '{faz_500}', '[\"a.rs\"]', 0, 'x', 'y', 'funcionalidade')")).await;
     ok(
         p,
-        &format!("INSERT INTO tarefa ({cols}) VALUES ('ler', NULL, 0, 'x', 'y', 'pesquisa')"),
+        &format!("INSERT INTO tarefa ({cols}) VALUES (1, 'ler', NULL, 0, 'x', 'y', 'pesquisa')"),
     )
     .await;
     ok(
         p,
-        &format!("INSERT INTO tarefa ({cols}) VALUES ('testar', '[]', 1, 'x', 'y', 'teste')"),
+        &format!("INSERT INTO tarefa ({cols}) VALUES (1, 'testar', '[]', 1, 'x', 'y', 'teste')"),
     )
     .await;
     ok(
         p,
-        &format!("INSERT INTO tarefa ({cols}) VALUES ('usar', NULL, 1, 'x', 'y', 'adversarial')"),
+        &format!(
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'usar', NULL, 1, 'x', 'y', 'adversarial')"
+        ),
     )
     .await;
-    rejects(p, &format!("INSERT INTO tarefa ({cols}) VALUES ('{faz_501}', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')"), "tarefa_faz_tamanho").await;
+    rejects(p, &format!("INSERT INTO tarefa ({cols}) VALUES (1, '{faz_501}', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')"), "tarefa_faz_tamanho").await;
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, '', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')"
         ),
         "tarefa_faz_tamanho",
     )
@@ -549,7 +552,7 @@ async fn tarefa() {
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('  ', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, '  ', '[\"a\"]', 0, 'x', 'y', 'funcionalidade')"
         ),
         "tarefa_faz_vazio",
     )
@@ -557,7 +560,7 @@ async fn tarefa() {
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('f', '[\"a\"]', 0, ' ', 'y', 'funcionalidade')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', '[\"a\"]', 0, ' ', 'y', 'funcionalidade')"
         ),
         "tarefa_pronto_quando_vazio",
     )
@@ -565,21 +568,21 @@ async fn tarefa() {
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('f', '[\"a\"]', 0, 'x', '', 'funcionalidade')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', '[\"a\"]', 0, 'x', '', 'funcionalidade')"
         ),
         "tarefa_prova_vazio",
     )
     .await;
     rejects(
         p,
-        "INSERT INTO tarefa (faz, paralelo, prova, papel) VALUES ('f', 0, 'y', 'teste')",
-        "NOT NULL constraint failed: tarefa.pronto_quando",
+        "INSERT INTO tarefa (plano, faz, paralelo, prova, papel) VALUES (1, 'f', 0, 'y', 'teste')",
+        "tarefa_pronto_quando_vazio",
     )
     .await;
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('f', '[\"a\"]', 2, 'x', 'y', 'funcionalidade')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', '[\"a\"]', 2, 'x', 'y', 'funcionalidade')"
         ),
         "tarefa_paralelo_booleano",
     )
@@ -587,7 +590,7 @@ async fn tarefa() {
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('f', '[\"a\"]', 0, 'x', 'y', 'orquestrador')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', '[\"a\"]', 0, 'x', 'y', 'orquestrador')"
         ),
         "tarefa_papel_valores",
     )
@@ -596,26 +599,32 @@ async fn tarefa() {
     // toca_em: required (non-empty) for funcionalidade; JSON list of relative paths.
     rejects(
         p,
-        &format!("INSERT INTO tarefa ({cols}) VALUES ('f', NULL, 0, 'x', 'y', 'funcionalidade')"),
+        &format!(
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', NULL, 0, 'x', 'y', 'funcionalidade')"
+        ),
         "tarefa_toca_em_funcionalidade",
     )
     .await;
     rejects(
         p,
-        &format!("INSERT INTO tarefa ({cols}) VALUES ('f', '[]', 0, 'x', 'y', 'funcionalidade')"),
+        &format!(
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', '[]', 0, 'x', 'y', 'funcionalidade')"
+        ),
         "tarefa_toca_em_funcionalidade",
     )
     .await;
     rejects(
         p,
-        &format!("INSERT INTO tarefa ({cols}) VALUES ('f', 'a.rs', 0, 'x', 'y', 'funcionalidade')"),
+        &format!(
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', 'a.rs', 0, 'x', 'y', 'funcionalidade')"
+        ),
         "tarefa_toca_em_lista",
     )
     .await;
     rejects(
         p,
         &format!(
-            "INSERT INTO tarefa ({cols}) VALUES ('f', '{{\"a\":1}}', 0, 'x', 'y', 'funcionalidade')"
+            "INSERT INTO tarefa ({cols}) VALUES (1, 'f', '{{\"a\":1}}', 0, 'x', 'y', 'funcionalidade')"
         ),
         "tarefa_toca_em_lista",
     )
@@ -629,7 +638,7 @@ async fn tarefa() {
     ] {
         rejects(
             p,
-            &format!("INSERT INTO tarefa ({cols}) VALUES ('f', '[\"ok.rs\", {item}]', 0, 'x', 'y', 'funcionalidade')"),
+            &format!("INSERT INTO tarefa ({cols}) VALUES (1, 'f', '[\"ok.rs\", {item}]', 0, 'x', 'y', 'funcionalidade')"),
             "tarefa_toca_em_relativo",
         )
         .await;
@@ -706,7 +715,7 @@ async fn execucao() {
     let p = f.pool();
     let cols = "chat, tarefa, papel, modelo, prompt_versao, worktree, branch, status, motivo_fila";
     ok(p, "INSERT INTO execucao (chat, papel, modelo, prompt_versao, status) VALUES (1, 'orquestrador', 'opus', 1, 'rodando')").await;
-    for status in ["rodando", "concluido", "falhou", "interrompida"] {
+    for status in ["rodando", "concluído", "falhou", "interrompida"] {
         ok(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'funcionalidade', 'opus', 1, 'C:\\w', 'fix/BUG-3-x', '{status}', NULL)")).await;
     }
     for motivo in ["teto", "toca_em", "recurso"] {
@@ -714,7 +723,7 @@ async fn execucao() {
     }
     rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'pesquisa', 'opus', 1, NULL, NULL, 'na fila', NULL)"), "execucao_motivo_fila_na_fila").await;
     rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'pesquisa', 'opus', 1, NULL, NULL, 'na fila', 'cansaco')"), "execucao_motivo_fila_valores").await;
-    rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'pesquisa', 'opus', 1, NULL, NULL, 'concluído', NULL)"), "execucao_status_valores").await;
+    rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'pesquisa', 'opus', 1, NULL, NULL, 'concluido', NULL)"), "execucao_status_valores").await;
     rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'revisor', 'opus', 1, NULL, NULL, 'rodando', NULL)"), "execucao_papel_valores").await;
     rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, NULL, 'teste', 'opus', 1, NULL, NULL, 'rodando', NULL)"), "execucao_tarefa_obrigatoria").await;
     rejects(p, &format!("INSERT INTO execucao ({cols}) VALUES (1, 1, 'teste', ' ', 1, NULL, NULL, 'rodando', NULL)"), "execucao_modelo_vazio").await;
@@ -743,7 +752,7 @@ async fn execucao() {
     }
 
     // prompt_versao does not change during the run (RN-28).
-    ok(p, "UPDATE execucao SET status = 'concluido' WHERE id = 1").await;
+    ok(p, "UPDATE execucao SET status = 'concluído' WHERE id = 1").await;
     ok(p, "UPDATE execucao SET prompt_versao = 1 WHERE id = 1").await;
     rejects(
         p,
@@ -777,13 +786,13 @@ async fn prompt_papel() {
     rejects(
         p,
         &format!("INSERT INTO prompt_papel ({cols}) VALUES ('teste', 'outro', 2, 1, 1, 1)"),
-        "UNIQUE constraint failed: prompt_papel.fluxo",
+        "prompt_papel_uma_vigente_por_fluxo",
     )
     .await;
     rejects(
         p,
         &format!("INSERT INTO prompt_papel ({cols}) VALUES ('teste', 'outro', 1, 1, 1, 0)"),
-        "UNIQUE constraint failed: prompt_papel.fluxo, prompt_papel.versao",
+        "prompt_papel_versao_imutavel",
     )
     .await;
     ok(
@@ -864,35 +873,35 @@ async fn prompt_papel() {
 async fn relatorio_e_criterio() {
     let f = seeded().await;
     let p = f.pool();
-    let cols = "resultado, o_que_fez, prova";
+    let cols = "execucao, resultado, o_que_fez, prova";
     for resultado in ["concluído", "falhou", "bloqueado"] {
         ok(
             p,
-            &format!("INSERT INTO relatorio ({cols}) VALUES ('{resultado}', 'fez', 'prova')"),
+            &format!("INSERT INTO relatorio ({cols}) VALUES (1, '{resultado}', 'fez', 'prova')"),
         )
         .await;
     }
     rejects(
         p,
-        &format!("INSERT INTO relatorio ({cols}) VALUES ('concluido', 'fez', 'prova')"),
+        &format!("INSERT INTO relatorio ({cols}) VALUES (1, 'concluido', 'fez', 'prova')"),
         "relatorio_resultado_valores",
     )
     .await;
     rejects(
         p,
-        &format!("INSERT INTO relatorio ({cols}) VALUES ('falhou', '', 'prova')"),
+        &format!("INSERT INTO relatorio ({cols}) VALUES (1, 'falhou', '', 'prova')"),
         "relatorio_o_que_fez_vazio",
     )
     .await;
     rejects(
         p,
-        &format!("INSERT INTO relatorio ({cols}) VALUES ('falhou', 'fez', ' ')"),
+        &format!("INSERT INTO relatorio ({cols}) VALUES (1, 'falhou', 'fez', ' ')"),
         "relatorio_prova_vazio",
     )
     .await;
     rejects(
         p,
-        "INSERT INTO relatorio (resultado, o_que_fez) VALUES ('falhou', 'fez')",
+        "INSERT INTO relatorio (execucao, resultado, o_que_fez) VALUES (1, 'falhou', 'fez')",
         "NOT NULL constraint failed: relatorio.prova",
     )
     .await;
@@ -928,10 +937,10 @@ async fn relatorio_e_criterio() {
         "relatorio_listas_texto",
     )
     .await;
-    rejects(p, &format!("INSERT INTO relatorio ({cols}, candidatos_a_nota) VALUES ('falhou', 'fez', 'p', '[null]')"), "relatorio_listas_texto").await;
+    rejects(p, &format!("INSERT INTO relatorio ({cols}, candidatos_a_nota) VALUES (1, 'falhou', 'fez', 'p', '[null]')"), "relatorio_listas_texto").await;
     check_utc(
         p,
-        "INSERT INTO relatorio (resultado, o_que_fez, prova, registrado_em) VALUES ('falhou', 'fez', 'p', '{}')",
+        "INSERT INTO relatorio (execucao, resultado, o_que_fez, prova, registrado_em) VALUES (1, 'falhou', 'fez', 'p', '{}')",
         "relatorio_registrado_em_utc",
         0,
     )
@@ -981,23 +990,25 @@ async fn relatorio_e_criterio() {
 // ENT-10 Achado
 #[tokio::test]
 async fn achado() {
-    let f = open().await;
+    let f = seeded().await;
     let p = f.pool();
-    let cols = "tipo, passos, esperado, obtido, decisao, status";
-    ok(p, &format!("INSERT INTO achado ({cols}) VALUES ('bug', '[\"abrir\"]', 'e', 'o', 'corrigir', 'aberto')")).await;
+    let cols = "execucao, tipo, passos, esperado, obtido, decisao, status";
+    ok(p, &format!("INSERT INTO achado ({cols}) VALUES (1, 'bug', '[\"abrir\"]', 'e', 'o', 'corrigir', 'aberto')")).await;
     for decisao in ["NULL", "'corrigir'", "'limite'", "'opcional'"] {
-        ok(p, &format!("INSERT INTO achado ({cols}) VALUES ('sugestao', '[\"a\", \"b\"]', 'e', 'o', {decisao}, 'fechado')")).await;
+        ok(p, &format!("INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[\"a\", \"b\"]', 'e', 'o', {decisao}, 'fechado')")).await;
     }
     rejects(
         p,
-        &format!("INSERT INTO achado ({cols}) VALUES ('bug', '[\"a\"]', 'e', 'o', NULL, 'aberto')"),
+        &format!(
+            "INSERT INTO achado ({cols}) VALUES (1, 'bug', '[\"a\"]', 'e', 'o', NULL, 'aberto')"
+        ),
         "achado_bug_corrigir",
     )
     .await;
     rejects(
         p,
         &format!(
-            "INSERT INTO achado ({cols}) VALUES ('bug', '[\"a\"]', 'e', 'o', 'opcional', 'aberto')"
+            "INSERT INTO achado ({cols}) VALUES (1, 'bug', '[\"a\"]', 'e', 'o', 'opcional', 'aberto')"
         ),
         "achado_bug_corrigir",
     )
@@ -1011,29 +1022,31 @@ async fn achado() {
     rejects(
         p,
         &format!(
-            "INSERT INTO achado ({cols}) VALUES ('melhoria', '[\"a\"]', 'e', 'o', NULL, 'aberto')"
+            "INSERT INTO achado ({cols}) VALUES (1, 'melhoria', '[\"a\"]', 'e', 'o', NULL, 'aberto')"
         ),
         "achado_tipo_valores",
     )
     .await;
-    rejects(p, "INSERT INTO achado (passos, esperado, obtido, status) VALUES ('[\"a\"]', 'e', 'o', 'aberto')", "NOT NULL constraint failed: achado.tipo").await;
-    rejects(p, &format!("INSERT INTO achado ({cols}) VALUES ('sugestao', '[\"a\"]', 'e', 'o', 'talvez', 'aberto')"), "achado_decisao_valores").await;
-    rejects(p, &format!("INSERT INTO achado ({cols}) VALUES ('sugestao', '[\"a\"]', 'e', 'o', NULL, 'resolvido')"), "achado_status_valores").await;
+    rejects(p, "INSERT INTO achado (execucao, passos, esperado, obtido, status) VALUES (1, '[\"a\"]', 'e', 'o', 'aberto')", "NOT NULL constraint failed: achado.tipo").await;
+    rejects(p, &format!("INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[\"a\"]', 'e', 'o', 'talvez', 'aberto')"), "achado_decisao_valores").await;
+    rejects(p, &format!("INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[\"a\"]', 'e', 'o', NULL, 'resolvido')"), "achado_status_valores").await;
     rejects(
         p,
-        &format!("INSERT INTO achado ({cols}) VALUES ('sugestao', '[]', 'e', 'o', NULL, 'aberto')"),
+        &format!(
+            "INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[]', 'e', 'o', NULL, 'aberto')"
+        ),
         "achado_passos_lista",
     )
     .await;
     rejects(
         p,
         &format!(
-            "INSERT INTO achado ({cols}) VALUES ('sugestao', '1. abrir', 'e', 'o', NULL, 'aberto')"
+            "INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '1. abrir', 'e', 'o', NULL, 'aberto')"
         ),
         "achado_passos_lista",
     )
     .await;
-    rejects(p, &format!("INSERT INTO achado ({cols}) VALUES ('sugestao', '[\"a\", \" \"]', 'e', 'o', NULL, 'aberto')"), "achado_passos_texto").await;
+    rejects(p, &format!("INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[\"a\", \" \"]', 'e', 'o', NULL, 'aberto')"), "achado_passos_texto").await;
     rejects(
         p,
         "UPDATE achado SET passos = '[2]' WHERE id = 1",
@@ -1043,7 +1056,7 @@ async fn achado() {
     rejects(
         p,
         &format!(
-            "INSERT INTO achado ({cols}) VALUES ('sugestao', '[\"a\"]', '', 'o', NULL, 'aberto')"
+            "INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[\"a\"]', '', 'o', NULL, 'aberto')"
         ),
         "achado_esperado_vazio",
     )
@@ -1051,7 +1064,7 @@ async fn achado() {
     rejects(
         p,
         &format!(
-            "INSERT INTO achado ({cols}) VALUES ('sugestao', '[\"a\"]', 'e', ' ', NULL, 'aberto')"
+            "INSERT INTO achado ({cols}) VALUES (1, 'sugestao', '[\"a\"]', 'e', ' ', NULL, 'aberto')"
         ),
         "achado_obtido_vazio",
     )
@@ -1302,30 +1315,30 @@ async fn recurso() {
 // ENT-17 Escrita, ENT-18 Decisao, ENT-19 Briefing
 #[tokio::test]
 async fn escrita_decisao_briefing() {
-    let f = open().await;
+    let f = seeded().await;
     let p = f.pool();
-    ok(p, "INSERT INTO escrita (caminho, motivo, hora) VALUES ('orquestra/diarios/d.md', 'registro', '2026-11-19T18:20:00Z')").await;
+    ok(p, "INSERT INTO escrita (cofre, caminho, motivo, hora) VALUES (1, 'orquestra/diarios/d.md', 'registro', '2026-11-19T18:20:00Z')").await;
     rejects(
         p,
-        "INSERT INTO escrita (caminho, motivo, hora) VALUES ('', 'm', '2026-11-19T18:20:00Z')",
+        "INSERT INTO escrita (cofre, caminho, motivo, hora) VALUES (1, '', 'm', '2026-11-19T18:20:00Z')",
         "escrita_caminho_vazio",
     )
     .await;
     rejects(
         p,
-        "INSERT INTO escrita (caminho, motivo, hora) VALUES ('c', ' ', '2026-11-19T18:20:00Z')",
+        "INSERT INTO escrita (cofre, caminho, motivo, hora) VALUES (1, 'c', ' ', '2026-11-19T18:20:00Z')",
         "escrita_motivo_vazio",
     )
     .await;
     rejects(
         p,
-        "INSERT INTO escrita (caminho, hora) VALUES ('c', '2026-11-19T18:20:00Z')",
+        "INSERT INTO escrita (cofre, caminho, hora) VALUES (1, 'c', '2026-11-19T18:20:00Z')",
         "NOT NULL constraint failed: escrita.motivo",
     )
     .await;
     check_utc(
         p,
-        "INSERT INTO escrita (caminho, motivo, hora) VALUES ('c', 'm', '{}')",
+        "INSERT INTO escrita (cofre, caminho, motivo, hora) VALUES (1, 'c', 'm', '{}')",
         "escrita_hora_utc",
         0,
     )
