@@ -5,17 +5,13 @@
 // este arquivo no `vite --mode simulado` (ver `vite.config.ts`).
 import type { InstrucaoConexao, Integracao, MockCommandHandlers, TipoIntegracao } from "@/bindings";
 import { mockCommands } from "@/bindings";
+import { CENARIO_PADRAO, CENARIOS, ESTADO_INICIAL_SIMULADO } from "./cenarios";
 import {
   criarNucleoSimuladoDeIntegracoes,
   type NucleoSimuladoDeIntegracoes,
 } from "@/lib/ipc/nucleo-simulado-integracoes";
 
-/** Estado inicial: Claude CLI pronto, Obsidian CLI e GitHub a conectar. */
-export const ESTADO_INICIAL_SIMULADO = {
-  claude_cli: { status: "conectado", versao: "2.1.0 (Claude Code) [simulado]" },
-  obsidian_cli: { status: "desconectado" },
-  github: { status: "desconectado" },
-} as const;
+export { ESTADO_INICIAL_SIMULADO } from "./cenarios";
 
 /** Instruções que cada `conectar` manda pelo canal, como o núcleo real. */
 export const INSTRUCOES_SIMULADAS: Record<TipoIntegracao, InstrucaoConexao[]> = {
@@ -43,6 +39,8 @@ const CONCLUSAO = {
 export type OpcoesDoNucleoSimulado = {
   /** Tempo até o "Humano" concluir o login (Claude CLI e GitHub), em ms. */
   atrasoMs?: number;
+  /** Nome em `CENARIOS` do estado em que o núcleo abre; sem ele, o padrão. */
+  cenario?: string;
 };
 
 export type NucleoSimulado = {
@@ -54,8 +52,13 @@ export type NucleoSimulado = {
 
 export function criarNucleoSimulado({
   atrasoMs = 3000,
+  cenario = CENARIO_PADRAO,
 }: OpcoesDoNucleoSimulado = {}): NucleoSimulado {
-  const integracoes = criarNucleoSimuladoDeIntegracoes(ESTADO_INICIAL_SIMULADO);
+  const escolhido = CENARIOS[cenario];
+  if (!escolhido) throw new Error(`cenário desconhecido no núcleo simulado: ${cenario}`);
+  const inicial = { ...ESTADO_INICIAL_SIMULADO, ...escolhido.estado };
+  const integracoes = criarNucleoSimuladoDeIntegracoes(inicial);
+  if (escolhido.naoLigada) integracoes.desligar(escolhido.naoLigada.tipo, escolhido.naoLigada.erro);
   const base = integracoes.handlers;
   // Conexão em andamento por integração: "Conectar" de novo mostra a mesma instrução e
   // espera o mesmo fluxo (UC-01 FA-02, AC-157).
@@ -63,6 +66,8 @@ export function criarNucleoSimulado({
 
   const conectarIntegracao: MockCommandHandlers["conectarIntegracao"] = (args) => {
     const { tipo, instrucoes } = args;
+    // Integração não ligada (ERR-55): o núcleo falha antes de mandar instruções.
+    if (integracoes.desligada(tipo)) return base.conectarIntegracao!(args);
     const atual = emAndamento.get(tipo);
     if (atual) {
       for (const instrucao of INSTRUCOES_SIMULADAS[tipo]) instrucoes.onmessage(instrucao);
@@ -99,6 +104,8 @@ export function instalarNucleoSimulado(opcoes?: OpcoesDoNucleoSimulado): NucleoS
   const nucleo = criarNucleoSimulado(opcoes);
   mockCommands(nucleo.handlers);
   window.__nucleoSimulado = nucleo;
-  console.info("[MyHarness] modo simulado: núcleo simulado das integrações instalado");
+  console.info(
+    `[MyHarness] modo simulado: núcleo simulado das integrações instalado (cenário "${opcoes?.cenario ?? CENARIO_PADRAO}")`,
+  );
   return nucleo;
 }
