@@ -31,9 +31,12 @@ const NOME_DO_PREFIXO: Record<string, Cartao> = {
 
 function esperadoDeCadaIntegracao(): Record<string, Esperado> {
   const esperado: Record<string, Esperado> = {};
+  // `sem login` e `não instalado` só existem para o Claude CLI (o núcleo só manda esses).
+  esperado["claude-sem-login"] = { "Claude CLI": { status: "sem login", botao: "Conectar" } };
+  esperado["claude-nao-instalado"] = {
+    "Claude CLI": { status: "não instalado", alerta: "Claude CLI não encontrado", botao: "Testar" },
+  };
   for (const [p, nome] of Object.entries(NOME_DO_PREFIXO)) {
-    esperado[`${p}-sem-login`] = { [nome]: { status: "sem login", botao: "Conectar" } };
-    esperado[`${p}-nao-instalado`] = { [nome]: { status: "não instalado", botao: "Testar" } };
     esperado[`${p}-err-53`] = {
       [nome]: {
         status: "desconectado",
@@ -109,10 +112,8 @@ describe("cenários do dev:simulado", () => {
       expect(within(c).getByRole("heading", { name: cartao }).nextElementSibling).toHaveTextContent(
         status,
       );
-      // `não instalado` fora do Claude CLI: o cartão de hoje mostra a ação do ERR-01, então
-      // só o status é conferido (ver relatório da T9).
       if (alerta) expect(within(c).getByRole("alert")).toHaveTextContent(alerta);
-      else if (status !== "não instalado") expect(within(c).queryByRole("alert")).toBeNull();
+      else expect(within(c).queryByRole("alert")).toBeNull();
       if (botao) expect(within(c).getByRole("button", { name: botao })).toBeEnabled();
     }
   });
@@ -150,6 +151,18 @@ describe("?cenario= na URL", () => {
     const texto = String(aviso.mock.calls[0]![0]);
     expect(texto).toContain('"nao-existe"');
     for (const nome of Object.keys(CENARIOS)) expect(texto).toContain(nome);
+  });
+
+  it.each([
+    "obsidian-sem-login",
+    "obsidian-nao-instalado",
+    "github-sem-login",
+    "github-nao-instalado",
+  ])("%s não existe (o núcleo nunca manda): cai no padrão com aviso", (nome) => {
+    const aviso = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(cenarioDaUrl(`?cenario=${nome}`)).toBe(CENARIO_PADRAO);
+    expect(aviso).toHaveBeenCalledOnce();
+    expect(String(aviso.mock.calls[0]![0])).toContain(`"${nome}" desconhecido`);
   });
 
   it("nomes em kebab-case", () => {
