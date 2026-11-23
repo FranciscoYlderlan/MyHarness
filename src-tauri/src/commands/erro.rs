@@ -10,7 +10,7 @@ use specta::Type;
 
 macro_rules! catalogo {
     ($($variante:ident = $id:literal, $codigo:literal;)*) => {
-        /// Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-53).
+        /// Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-54).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type)]
         pub enum CodigoErro {
             $(
@@ -96,6 +96,7 @@ catalogo! {
     GravacaoDivergente = "ERR-51", "GRAVACAO_DIVERGENTE";
     LimiteDeContextoAbaixoDoMinimo = "ERR-52", "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO";
     IntegracaoFalhaInesperada = "ERR-53", "INTEGRACAO_FALHA_INESPERADA";
+    GravacaoDesfeitaPelaMetade = "ERR-54", "GRAVACAO_DESFEITA_PELA_METADE";
 }
 
 /// Um item do catálogo com os valores do momento (`<x>` da mensagem).
@@ -273,6 +274,7 @@ mod tests {
         ("ERR-51", "GRAVACAO_DIVERGENTE"),
         ("ERR-52", "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO"),
         ("ERR-53", "INTEGRACAO_FALHA_INESPERADA"),
+        ("ERR-54", "GRAVACAO_DESFEITA_PELA_METADE"),
     ];
 
     #[test]

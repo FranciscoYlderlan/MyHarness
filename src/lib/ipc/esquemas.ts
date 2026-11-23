@@ -5,11 +5,13 @@
 import { z } from "zod";
 import type * as B from "@/bindings";
 
-/** Data e hora em ISO 8601 UTC com `Z`, como o núcleo grava (sem deslocamento). */
-export const dataHoraUtc: z.ZodType<B.DataHoraUtc> = z.iso.datetime({
-  offset: false,
-  local: false,
-});
+/**
+ * Data e hora em ISO 8601 UTC com `Z`, como o núcleo grava (sem deslocamento), com
+ * segundos e fração opcional de 1 a 9 casas, igual ao `DataHoraUtc` do Rust.
+ */
+export const dataHoraUtc: z.ZodType<B.DataHoraUtc> = z.iso
+  .datetime({ offset: false, local: false })
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/);
 
 const id = z.string().min(1);
 const inteiro = z.number().int().min(0);
@@ -68,6 +70,7 @@ export const codigoErro = z.enum([
   "GRAVACAO_DIVERGENTE",
   "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO",
   "INTEGRACAO_FALHA_INESPERADA",
+  "GRAVACAO_DESFEITA_PELA_METADE",
 ]) satisfies z.ZodType<B.CodigoErro>;
 
 export const erroCatalogo = z.object({
@@ -124,6 +127,7 @@ export const mensagem = z.object({
 }) satisfies z.ZodType<B.Mensagem>;
 
 const nomePapel = z.enum(["orquestrador", "funcionalidade", "teste", "adversarial", "pesquisa"]);
+// `concluido` no fio = "concluído" do contrato (M-38); todo enum da IPC vai em ASCII.
 export const statusExecucao = z.enum(["na_fila", "rodando", "concluido", "falhou", "interrompida"]);
 
 export const execucao = z.object({
@@ -157,6 +161,25 @@ export const leitura = z.object({
   origem: z.enum(["cli", "arquivo"]),
   hora: dataHoraUtc,
 }) satisfies z.ZodType<B.Leitura>;
+
+export const criterio = z.object({
+  status: z.enum(["passou", "falhou", "nao_verificado_presumido"]),
+  prova: z.string().nullable(),
+}) satisfies z.ZodType<B.Criterio>;
+
+export const relatorio = z.object({
+  id,
+  execucao: id,
+  // `concluido` no fio = "concluído" do contrato (M-38).
+  resultado: z.enum(["concluido", "falhou", "bloqueado"]),
+  o_que_fez: z.string(),
+  arquivos: z.array(z.string()),
+  prova: z.string(),
+  criterios: z.array(criterio),
+  duvidas: z.array(z.string()),
+  candidatos_a_nota: z.array(z.string()),
+  registrado_em: dataHoraUtc.nullable(),
+}) satisfies z.ZodType<B.Relatorio>;
 
 export const pendencia = z.discriminatedUnion("tipo", [
   z.object({ tipo: z.literal("plano_proposto"), plano: id }),
