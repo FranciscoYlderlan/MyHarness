@@ -21,6 +21,8 @@ mesmoTipo<Igual<z.infer<typeof E.execucao>, B.Execucao>>();
 mesmoTipo<Igual<z.infer<typeof E.log>, B.Log>>();
 mesmoTipo<Igual<z.infer<typeof E.leitura>, B.Leitura>>();
 mesmoTipo<Igual<z.infer<typeof E.pendencia>, B.Pendencia>>();
+mesmoTipo<Igual<z.infer<typeof E.criterio>, B.Criterio>>();
+mesmoTipo<Igual<z.infer<typeof E.relatorio>, B.Relatorio>>();
 mesmoTipo<Igual<z.infer<typeof E.eventoExecucao>, B.EventoExecucao>>();
 mesmoTipo<Igual<z.infer<typeof E.esquemasDeEvento.integracaoMudou>, B.IntegracaoMudou>>();
 mesmoTipo<Igual<z.infer<typeof E.esquemasDeEvento.consumoAtualizado>, B.ConsumoAtualizado>>();
@@ -32,7 +34,12 @@ mesmoTipo<Igual<z.infer<typeof E.esquemasDeEvento.pendenciasMudaram>, B.Pendenci
 
 describe("esquemas do contrato IPC", () => {
   it("aceita só data e hora em UTC com Z", () => {
-    for (const ok of ["2026-11-19T18:20:00Z", "2026-11-19T18:20:00.123Z"]) {
+    for (const ok of [
+      "2026-11-19T18:20:00Z",
+      "2026-11-19T18:20:00.123Z",
+      "2026-11-19T18:20:00.5Z",
+      "2026-11-19T18:20:00.123456789Z",
+    ]) {
       expect(E.dataHoraUtc.safeParse(ok).success).toBe(true);
     }
     for (const ruim of [
@@ -41,6 +48,9 @@ describe("esquemas do contrato IPC", () => {
       "2026-11-19T18:20:00+00:00",
       "2026-11-19",
       "19/11/2026 18:20",
+      "2026-11-19T18:20Z",
+      "2026-11-19T18:20:00.Z",
+      "2026-11-19T18:20:00.1234567890Z",
     ]) {
       expect(E.dataHoraUtc.safeParse(ruim).success).toBe(false);
     }
@@ -64,7 +74,7 @@ describe("esquemas do contrato IPC", () => {
     const erro: B.ErroCatalogo = { codigo: "SUBAGENTE_CAIU", id: "ERR-17", parametros: {} };
     expect(E.erroCatalogo.parse(erro)).toEqual(erro);
     expect(E.erroCatalogo.safeParse({ ...erro, codigo: "OUTRO" }).success).toBe(false);
-    expect(E.codigoErro.options).toHaveLength(53);
+    expect(E.codigoErro.options).toHaveLength(54);
   });
 
   it("valida cada variante da saída ao vivo", () => {

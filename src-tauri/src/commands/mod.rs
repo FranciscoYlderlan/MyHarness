@@ -44,6 +44,8 @@ pub fn construtor() -> Builder<tauri::Wry> {
         ])
         .typ::<eventos::EventoExecucao>()
         .typ::<erro::ErroIpc>()
+        // Relatório (ENT-09) e Critério (ENT-24): no contrato, ainda sem comando nem evento.
+        .typ::<dto::Relatorio>()
         .disable_serde_phases()
         .error_handling(ErrorHandlingMode::Result)
         .mocks()
