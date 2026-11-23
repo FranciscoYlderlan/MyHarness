@@ -14,13 +14,16 @@ afterEach(() => {
 
 type Cartao = "Claude CLI" | "Obsidian CLI" | "GitHub";
 
-/** O que cada cartão mostra: o status no cabeçalho e o texto do alerta (ou nenhum). */
-type Esperado = Partial<Record<Cartao, { status: string; alerta?: string; botao?: string }>>;
+/**
+ * O que cada cartão mostra: o status no cabeçalho, o texto inteiro do alerta (ou nenhum) e
+ * todos os botões, em ordem.
+ */
+type Esperado = Partial<Record<Cartao, { status: string; alerta?: string; botoes: string[] }>>;
 
 const PADRAO: Esperado = {
-  "Claude CLI": { status: "conectado", botao: "Desconectar" },
-  "Obsidian CLI": { status: "desconectado", botao: "Conectar" },
-  GitHub: { status: "desconectado", botao: "Conectar" },
+  "Claude CLI": { status: "conectado", botoes: ["Testar", "Desconectar"] },
+  "Obsidian CLI": { status: "desconectado", botoes: ["Conectar"] },
+  GitHub: { status: "desconectado", botoes: ["Conectar"] },
 };
 
 const NOME_DO_PREFIXO: Record<string, Cartao> = {
@@ -32,23 +35,27 @@ const NOME_DO_PREFIXO: Record<string, Cartao> = {
 function esperadoDeCadaIntegracao(): Record<string, Esperado> {
   const esperado: Record<string, Esperado> = {};
   // `sem login` e `não instalado` só existem para o Claude CLI (o núcleo só manda esses).
-  esperado["claude-sem-login"] = { "Claude CLI": { status: "sem login", botao: "Conectar" } };
+  esperado["claude-sem-login"] = { "Claude CLI": { status: "sem login", botoes: ["Conectar"] } };
   esperado["claude-nao-instalado"] = {
-    "Claude CLI": { status: "não instalado", alerta: "Claude CLI não encontrado", botao: "Testar" },
+    "Claude CLI": {
+      status: "não instalado",
+      alerta: "Claude CLI não encontradoInstalar o Claude CLI",
+      botoes: ["Testar"],
+    },
   };
   for (const [p, nome] of Object.entries(NOME_DO_PREFIXO)) {
     esperado[`${p}-err-53`] = {
       [nome]: {
         status: "desconectado",
         alerta: `Falha inesperada com ${nome}: tempo esgotado [simulado]. Tente de novo.`,
-        botao: "Repetir",
+        botoes: ["Conectar", "Repetir"],
       },
     };
     esperado[`${p}-err-55`] = {
       [nome]: {
         status: "desconectado",
         alerta: `Algo deu errado no MyHarness: o núcleo não ligou ${nome} [simulado]. Tente de novo.`,
-        botao: "Repetir",
+        botoes: ["Conectar", "Repetir"],
       },
     };
   }
@@ -58,31 +65,35 @@ function esperadoDeCadaIntegracao(): Record<string, Esperado> {
 const ESPERADO: Record<string, Esperado> = {
   padrao: {},
   "todas-conectadas": {
-    "Obsidian CLI": { status: "conectado", botao: "Desconectar" },
-    GitHub: { status: "conectado", botao: "Desconectar" },
+    "Obsidian CLI": { status: "conectado", botoes: ["Testar", "Desconectar"] },
+    GitHub: { status: "conectado", botoes: ["Testar", "Desconectar"] },
   },
   "claude-err-01": {
-    "Claude CLI": { status: "não instalado", alerta: "Claude CLI não encontrado", botao: "Testar" },
+    "Claude CLI": {
+      status: "não instalado",
+      alerta: "Claude CLI não encontradoInstalar o Claude CLI",
+      botoes: ["Testar"],
+    },
   },
   "github-err-02": {
     GitHub: {
       status: "desconectado",
       alerta: "Conexão com o GitHub não concluída: código expirado.",
-      botao: "Conectar",
+      botoes: ["Conectar"],
     },
   },
   "obsidian-err-03": {
     "Obsidian CLI": {
       status: "desconectado",
       alerta: "The CLI is unable to find Obsidian [simulado]Abrir Obsidian",
-      botao: "Conectar",
+      botoes: ["Conectar"],
     },
   },
   "claude-err-04": {
     "Claude CLI": {
       status: "sem login",
       alerta: "o /login foi fechado antes de concluir [simulado]",
-      botao: "Repetir",
+      botoes: ["Conectar", "Repetir"],
     },
   },
   ...esperadoDeCadaIntegracao(),
@@ -107,14 +118,16 @@ describe("cenários do dev:simulado", () => {
   it.each(Object.keys(CENARIOS))("%s abre a TEL-02 no estado dele", async (nome) => {
     await abrirTel02(nome);
     const esperado = { ...PADRAO, ...ESPERADO[nome] };
-    for (const [cartao, { status, alerta, botao }] of Object.entries(esperado)) {
+    for (const [cartao, { status, alerta, botoes }] of Object.entries(esperado)) {
       const c = screen.getByRole("article", { name: cartao });
       expect(within(c).getByRole("heading", { name: cartao }).nextElementSibling).toHaveTextContent(
         status,
       );
-      if (alerta) expect(within(c).getByRole("alert")).toHaveTextContent(alerta);
+      if (alerta) expect(within(c).getByRole("alert").textContent).toBe(alerta);
       else expect(within(c).queryByRole("alert")).toBeNull();
-      if (botao) expect(within(c).getByRole("button", { name: botao })).toBeEnabled();
+      const botoesDoCartao = within(c).queryAllByRole("button");
+      expect(botoesDoCartao.map((b) => b.textContent)).toEqual(botoes);
+      for (const b of botoesDoCartao) expect(b).toBeEnabled();
     }
   });
 
