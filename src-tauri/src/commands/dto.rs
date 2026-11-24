@@ -383,7 +383,7 @@ pub enum MotivoFila {
     Recurso,
 }
 
-/// ENT-07 Execução (o que a tela mostra; a lista de comandos vai pelo Log, ENT-12).
+/// ENT-07 Execução (o que a tela de execução mostra, inclusive os comandos).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct Execucao {
     pub id: ExecucaoId,
@@ -399,6 +399,9 @@ pub struct Execucao {
     pub status: StatusExecucao,
     /// Só quando `status = na_fila`.
     pub motivo_fila: Option<MotivoFila>,
+    /// Comandos executados pelo agente, mascarados (RN-04); push, merge e push --force
+    /// nunca entram, porque o núcleo os nega antes (RN-17, ERR-14).
+    pub comandos: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

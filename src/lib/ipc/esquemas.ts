@@ -71,6 +71,7 @@ export const codigoErro = z.enum([
   "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO",
   "INTEGRACAO_FALHA_INESPERADA",
   "GRAVACAO_DESFEITA_PELA_METADE",
+  "FALHA_INTERNA",
 ]) satisfies z.ZodType<B.CodigoErro>;
 
 export const erroCatalogo = z.object({
@@ -141,6 +142,9 @@ export const execucao = z.object({
   branch: z.string().nullable(),
   status: statusExecucao,
   motivo_fila: z.enum(["teto", "toca_em", "recurso"]).nullable(),
+  // Comandos executados pelo agente, já mascarados (RN-04); push, merge e push --force
+  // nunca entram (ERR-14).
+  comandos: z.array(z.string()),
 }) satisfies z.ZodType<B.Execucao>;
 
 export const log = z.object({
