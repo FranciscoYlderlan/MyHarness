@@ -1,4 +1,4 @@
-//! Infrastructure adapters. Only `db` is implemented in this stage.
+//! Infrastructure adapters: `db`, `mcp` (MCP client over HTTP) and `obsidian` (RF-02) are implemented.
 
 pub mod claude;
 pub mod db;
