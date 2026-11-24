@@ -199,7 +199,11 @@ impl ClaudeCli {
             } else {
                 StatusIntegracao::SemLogin
             },
-            conta: autenticacao.email.filter(|_| autenticacao.logado),
+            // A conta vem da CLI e vai à tela: passa pela máscara (RN-04).
+            conta: autenticacao
+                .email
+                .filter(|_| autenticacao.logado)
+                .map(|email| TextoMascarado::new(&email).as_str().to_owned()),
             versao: Some(versao),
         })
     }
