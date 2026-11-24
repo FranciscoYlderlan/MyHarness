@@ -7,8 +7,10 @@
 //! on prompt versions and runs; [`dual_write`] writes the ones that also live in the vault.
 //!
 //! Two rules for databases made by earlier builds (no version is published yet):
-//! * a database from before `0003` that the migrations cannot bring up to date is deleted and
-//!   created again (decision `geral-decisao-2026-11-23-banco-antigo-apagado`);
+//! * a database from before `0003` is deleted and created again only when `0003` stops on a row
+//!   without a required link (SQLite NOT NULL failure while running `0003`); any other migration
+//!   failure (checksum, full disk, I/O, busy, dirty) is returned and the file is left as it is
+//!   (decision `geral-decisao-2026-11-23-banco-antigo-apagado`);
 //! * a database that applied `0003` before its comment was corrected keeps working: sqlx refuses a
 //!   migration whose text changed since it ran, so the stored checksum of that first text is
 //!   replaced by the current one before migrating. Only that exact old checksum is replaced; any
@@ -21,7 +23,8 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use sqlx::migrate::Migrator;
+use sqlx::error::ErrorKind;
+use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
 /// File name of the database inside the app data directory.
@@ -64,7 +67,8 @@ pub struct Database {
 impl Database {
     /// Opens (or creates) the database in `data_dir`, enables WAL and runs pending migrations.
     ///
-    /// A database from before `0003` whose migration fails is deleted and created again.
+    /// A database from before `0003` on which `0003` stops with a NOT NULL failure is deleted and
+    /// created again; every other migration error is returned with the database untouched.
     pub async fn open(data_dir: &Path) -> Result<Self, DbError> {
         std::fs::create_dir_all(data_dir).map_err(|source| DbError::CreateDir {
             path: data_dir.to_path_buf(),
@@ -78,7 +82,7 @@ impl Database {
 
         match MIGRATOR.run(&pool).await {
             Ok(()) => Ok(Self { pool, path }),
-            Err(_) if applied.is_some_and(|v| v < MIGRATION_0003) => {
+            Err(err) if applied.is_some_and(|v| v < MIGRATION_0003) && is_0003_not_null(&err) => {
                 pool.close().await;
                 delete_database_files(&path)?;
                 let pool = connect(&path).await?;
@@ -157,6 +161,15 @@ async fn accept_first_checksum_of_0003(pool: &SqlitePool) -> Result<(), sqlx::Er
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// `0003` failed while running because a row lacks a required link (SQLite NOT NULL).
+fn is_0003_not_null(err: &MigrateError) -> bool {
+    matches!(
+        err,
+        MigrateError::ExecuteMigration(sqlx::Error::Database(db), MIGRATION_0003)
+            if db.kind() == ErrorKind::NotNullViolation
+    )
 }
 
 /// Deletes the database file and its WAL companions; missing files are fine.
