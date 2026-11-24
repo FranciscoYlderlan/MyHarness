@@ -83,9 +83,10 @@ pub enum DualWriteError {
     )]
     HalfUndone {
         note: String,
-        commit: sqlx::Error,
+        // Boxed so the error stays small (`clippy::result_large_err`); `sqlx::Error` is 48 bytes.
+        commit: Box<sqlx::Error>,
         undo: VaultError,
-        log: Option<sqlx::Error>,
+        log: Option<Box<sqlx::Error>>,
     },
 }
 
@@ -153,10 +154,13 @@ pub async fn commit_with_vault<V: VaultSide>(
     };
 
     let note = vault.note_name();
-    let log = log_half_undone(log, &note, &commit, &undo).await.err();
+    let log = log_half_undone(log, &note, &commit, &undo)
+        .await
+        .err()
+        .map(Box::new);
     Err(DualWriteError::HalfUndone {
         note,
-        commit,
+        commit: Box::new(commit),
         undo,
         log,
     })
