@@ -63,8 +63,7 @@ impl Default for ConfigClaudeCli {
 }
 
 /// Erro da integração com o Claude CLI: um item do catálogo de integrações
-/// (ERR-01, ERR-04) ou a falha inesperada (ERR-53), que o [`ErroIntegracao`] do núcleo
-/// ainda não tem.
+/// (ERR-01, ERR-04) ou a falha inesperada (ERR-53).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErroClaudeCli {
     /// ERR-01 ou ERR-04.
@@ -134,15 +133,15 @@ impl fmt::Display for ErroClaudeCli {
 
 impl std::error::Error for ErroClaudeCli {}
 
-/// Ponte para o trait [`Integracao`], que só devolve [`ErroIntegracao`]: o ERR-53 vira
-/// ERR-05 (`CLAUDE_CLI_DESCONECTADO`), cujo estado final é o mesmo (`desconectado`).
-/// Provisório até o núcleo ganhar a variante do ERR-53; quem precisa do código certo
-/// usa [`ClaudeCli::checar`] e [`ClaudeCli::fazer_login`].
+/// Para o trait [`Integracao`]: o ERR-53 sai como [`ErroIntegracao::FalhaInesperada`],
+/// com o motivo mascarado.
 impl From<ErroClaudeCli> for ErroIntegracao {
     fn from(erro: ErroClaudeCli) -> Self {
         match erro {
             ErroClaudeCli::Catalogo(erro) => erro,
-            ErroClaudeCli::FalhaInesperada { .. } => ErroIntegracao::ClaudeCliDesconectado,
+            ErroClaudeCli::FalhaInesperada { motivo } => {
+                ErroIntegracao::inesperada(TipoIntegracao::ClaudeCli, motivo)
+            }
         }
     }
 }

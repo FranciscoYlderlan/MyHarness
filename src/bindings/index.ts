@@ -373,12 +373,11 @@ export type ErroCatalogo = {
 };
 
 /**
- *  Erro de um comando. `catalogo` é a regra (o código diz o quê); falha inesperada do
- *  núcleo é o ERR-55 `FALHA_INTERNA` ([`ErroIpc::falha_interna`]). `interno` só resta no
- *  corpo provisório dos comandos ainda sem núcleo, até a T4 do integracoes-plano.
+ *  Erro de um comando: sempre um item do catálogo (o código diz o quê). Falha sem ERR
+ *  próprio usa o genérico da fronteira: ERR-53 nas integrações e ERR-55 `FALHA_INTERNA`
+ *  no núcleo ([`ErroIpc::falha_interna`]).
  */
-export type ErroIpc =
-  { tipo: "catalogo"; erro: ErroCatalogo } | { tipo: "interno"; motivo: MotivoInterno };
+export type ErroIpc = { tipo: "catalogo"; erro: ErroCatalogo };
 
 /**
  *  Saída ao vivo de uma execução, pelo canal aberto em `enviar_prompt` ou
@@ -512,11 +511,6 @@ export type MensagemId = string;
 
 /**  `motivo_fila` de ENT-07. */
 export type MotivoFila = "teto" | "toca_em" | "recurso";
-
-/**  Motivo de um [`ErroIpc::Interno`]. */
-export type MotivoInterno =
-  /**  O comando existe no contrato, mas o núcleo ainda não o implementa. */
-  "nao_implementado";
 
 /**  Papel de um agente (`nome` de ENT-15; `papel` de ENT-06 e ENT-07). */
 export type NomePapel = "orquestrador" | "funcionalidade" | "teste" | "adversarial" | "pesquisa";

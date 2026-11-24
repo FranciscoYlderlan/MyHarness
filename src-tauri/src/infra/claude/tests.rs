@@ -438,10 +438,15 @@ fn interpreta_a_versao_da_cli() {
 }
 
 #[test]
-fn err_53_vira_err_05_pelo_trait_com_o_mesmo_estado_final() {
+fn err_53_sai_pelo_trait_com_o_motivo_e_o_mesmo_estado_final() {
     let erro = ErroClaudeCli::FalhaInesperada { motivo: "x".into() };
     let pelo_trait = ErroIntegracao::from(erro.clone());
-    assert_eq!(pelo_trait, ErroIntegracao::ClaudeCliDesconectado);
+    assert_eq!(
+        pelo_trait,
+        ErroIntegracao::inesperada(TipoIntegracao::ClaudeCli, "x")
+    );
+    assert_eq!(pelo_trait.id(), "ERR-53");
+    assert_eq!(pelo_trait.to_string(), erro.to_string());
     assert_eq!(
         EstadoIntegracao::a_partir_do_erro(&pelo_trait),
         erro.estado()

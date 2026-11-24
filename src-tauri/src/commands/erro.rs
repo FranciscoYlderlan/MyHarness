@@ -127,32 +127,14 @@ impl ErroCatalogo {
     }
 }
 
-/// Erro de um comando. `catalogo` é a regra (o código diz o quê); falha inesperada do
-/// núcleo é o ERR-55 `FALHA_INTERNA` ([`ErroIpc::falha_interna`]). `interno` só resta no
-/// corpo provisório dos comandos ainda sem núcleo, até a T4 do integracoes-plano.
+/// Erro de um comando: sempre um item do catálogo (o código diz o quê). Falha sem ERR
+/// próprio usa o genérico da fronteira: ERR-53 nas integrações e ERR-55 `FALHA_INTERNA`
+/// no núcleo ([`ErroIpc::falha_interna`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "tipo", rename_all = "snake_case")]
 pub enum ErroIpc {
     #[error("{} {}", erro.id, erro.codigo.codigo())]
     Catalogo { erro: ErroCatalogo },
-    #[error("erro interno: {motivo}")]
-    Interno { motivo: MotivoInterno },
-}
-
-/// Motivo de um [`ErroIpc::Interno`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum MotivoInterno {
-    /// O comando existe no contrato, mas o núcleo ainda não o implementa.
-    NaoImplementado,
-}
-
-impl std::fmt::Display for MotivoInterno {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            MotivoInterno::NaoImplementado => "nao_implementado",
-        })
-    }
 }
 
 impl ErroIpc {
@@ -194,7 +176,8 @@ impl From<&ErroIntegracao> for ErroCatalogo {
             ErroIntegracao::ObsidianFechado { mensagem_da_cli } => {
                 erro.com("mensagem_da_cli", mensagem_da_cli.as_str())
             }
-            ErroIntegracao::LoginClaudeCliFalhou { motivo } => erro.com("motivo", motivo.as_str()),
+            ErroIntegracao::LoginClaudeCliFalhou { motivo }
+            | ErroIntegracao::FalhaInesperada { motivo, .. } => erro.com("motivo", motivo.as_str()),
             _ => erro,
         }
     }
@@ -316,13 +299,21 @@ mod tests {
         let e = ErroIntegracao::LoginClaudeCliFalhou {
             motivo: TextoMascarado::new("falhou com sk-ant-api03-abcdefghijklmnop"),
         };
-        let ErroIpc::Catalogo { erro } = ErroIpc::from(e) else {
-            panic!("devia ser do catálogo");
-        };
+        let ErroIpc::Catalogo { erro } = ErroIpc::from(e);
         assert_eq!(erro.codigo, CodigoErro::LoginClaudeCliFalhou);
         assert_eq!(erro.id, "ERR-04");
         assert!(!erro.parametros["motivo"].contains("abcdefghijklmnop"));
         assert_eq!(erro.parametros["integracao"], "Claude CLI");
+
+        let e = ErroIntegracao::inesperada(
+            my_harness_core::domain::integracao::TipoIntegracao::GitHub,
+            "erro de rede com ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        );
+        let ErroIpc::Catalogo { erro } = ErroIpc::from(e);
+        assert_eq!(erro.codigo, CodigoErro::IntegracaoFalhaInesperada);
+        assert_eq!(erro.id, "ERR-53");
+        assert_eq!(erro.parametros["integracao"], "GitHub");
+        assert_eq!(erro.parametros["motivo"], "erro de rede com ••••");
 
         for e in [
             ErroIntegracao::ClaudeCliNaoInstalado,
@@ -356,14 +347,5 @@ mod tests {
         let motivo = json["erro"]["parametros"]["motivo"].as_str().unwrap();
         assert!(motivo.starts_with("estado inesperado com "));
         assert!(!motivo.contains("abcdefghijklmnop"));
-
-        let json = serde_json::to_value(ErroIpc::Interno {
-            motivo: MotivoInterno::NaoImplementado,
-        })
-        .unwrap();
-        assert_eq!(
-            json,
-            serde_json::json!({ "tipo": "interno", "motivo": "nao_implementado" })
-        );
     }
 }

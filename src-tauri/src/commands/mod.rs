@@ -4,7 +4,8 @@
 //! - [`dto`]: tipos derivados dos ENT do contrato funcional.
 //! - [`erro`]: erros e avisos com o código do catálogo `05-erros`.
 //! - [`eventos`]: eventos globais e o canal por execução.
-//! - [`nucleo`]: a interface que os comandos chamam e o corpo provisório dela.
+//! - [`integracoes`]: o núcleo das integrações (UC-01): máscara, registro, RN-08.
+//! - [`nucleo`]: a interface que os comandos chamam e o corpo dela.
 //! - [`comandos`]: os comandos do Tauri.
 //!
 //! Gerar os bindings de novo: `pnpm bindings`. O teste `bindings_estao_em_dia` falha
@@ -14,6 +15,7 @@ pub mod comandos;
 pub mod dto;
 pub mod erro;
 pub mod eventos;
+pub mod integracoes;
 pub mod nucleo;
 
 use std::io::Write;
