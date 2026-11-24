@@ -617,12 +617,13 @@ async fn migration_0003_stops_without_changes_when_a_task_has_no_plan() {
     let dir = tempfile::tempdir().expect("temp dir");
     let old = old_database(dir.path()).await;
     ok(&old, "INSERT INTO tarefa (id, faz, paralelo, pronto_quando, prova, papel) VALUES (1, 'f', 0, 'x', 'y', 'teste')").await;
-    old.close().await;
 
-    let err = Database::open(dir.path())
+    let err = super::MIGRATOR
+        .run(&old)
         .await
         .expect_err("tarefa without plano");
     assert!(err.to_string().contains("tarefa_nova.plano"), "{err}");
+    old.close().await;
 
     let old = old_database(dir.path()).await;
     assert_eq!(
@@ -651,6 +652,244 @@ async fn migration_0003_stops_without_changes_when_a_task_has_no_plan() {
         .await,
         0
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Old databases on open: before 0003 and unable to migrate (deleted and created again), and
+// already on 0003 as first committed (checksum accepted).
+
+#[tokio::test]
+async fn open_deletes_and_recreates_a_0002_database_that_cannot_migrate() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let old = old_database(dir.path()).await;
+    for sql in [
+        "INSERT INTO projeto (id, nome) VALUES (1, 'MyHarness')",
+        "INSERT INTO tarefa (id, faz, paralelo, pronto_quando, prova, papel) VALUES (1, 'f', 0, 'x', 'y', 'teste')",
+    ] {
+        ok(&old, sql).await;
+    }
+    old.close().await;
+
+    let db = Database::open(dir.path())
+        .await
+        .expect("old database deleted and created again");
+    let p = db.pool();
+    assert_eq!(
+        count(
+            p,
+            "SELECT MAX(version) FROM _sqlx_migrations WHERE success = 1"
+        )
+        .await,
+        3
+    );
+    assert_eq!(
+        count(p, "SELECT COUNT(*) FROM projeto").await,
+        0,
+        "new database"
+    );
+    assert_eq!(
+        count(p, "SELECT COUNT(*) FROM tarefa").await,
+        0,
+        "new database"
+    );
+    assert_eq!(
+        count(
+            p,
+            "SELECT COUNT(*) FROM pragma_table_info('tarefa') WHERE name = 'plano'"
+        )
+        .await,
+        1,
+        "0003 applied"
+    );
+    let (mode,): (String,) = sqlx::query_as("PRAGMA journal_mode")
+        .fetch_one(p)
+        .await
+        .expect("journal_mode");
+    assert_eq!(mode.to_lowercase(), "wal");
+    ok(p, "INSERT INTO projeto (id, nome) VALUES (1, 'MyHarness')").await;
+    db.close().await;
+
+    let db = Database::open(dir.path()).await.expect("reopen");
+    assert_eq!(
+        count(db.pool(), "SELECT COUNT(*) FROM projeto").await,
+        1,
+        "the new database is kept on the next open"
+    );
+    db.close().await;
+}
+
+/// Comment on the `comandos` filter in `0003` as first committed (`ff1343f`).
+const FIRST_FILTER_COMMENT: &str = "\
+-- RN-17 / ERR-14: comandos lists the commands the agent ran (the core denies push, merge and
+-- push --force before they run): non-blank command lines, none of them a git push or merge
+-- (`push --force` included) nor `gh pr merge`. Command lines are compared in lower case, with
+-- tabs, line breaks and repeated spaces as one space, and the program allowed with a path or `.exe`.
+-- Only the subcommand right after the program is matched (`git -C x push` is not): a commit message
+-- with the word \"push\" or \"merge\" must still be recorded. The core gate is the real barrier (RN-27).
+";
+
+const CURRENT_FILTER_COMMENT: &str = "\
+-- RN-17 / ERR-14: comandos lists the commands the agent ran, as non-blank command lines. The push
+-- and merge check below is best effort, not a barrier: each line is compared in lower case, with
+-- tabs and line breaks as spaces and runs of up to 8 spaces as one, and only `git push`,
+-- `git merge` (`push --force` included) and `gh pr merge` written with the subcommand right after
+-- the program (a path or `.exe` allowed) are refused. Forms such as `git -C x push`,
+-- `git --no-pager push`, `\"git\" push`, `cd x&&git push` or 9 or more spaces before `push` get
+-- through, and a commit message with the word \"push\" or \"merge\" must still be recorded. The real
+-- barrier is the core gate, which denies push, merge and push --force before they run (RN-27).
+";
+
+const FIRST_HEADER_END: &str = "\
+-- holds tarefa, relatorio, achado or escrita rows stops here with a NOT NULL error and nothing changes.
+";
+
+const CURRENT_HEADER_END: &str = "\
+-- holds tarefa, relatorio, achado or escrita rows stops here with a NOT NULL error and nothing changes;
+-- `Database::open` then deletes that database and creates it again (no version is published yet).
+";
+
+/// Text of `0003` as first committed: only comments differ from the current file.
+fn first_text_of_0003(current: &str) -> String {
+    for (part, name) in [
+        (CURRENT_FILTER_COMMENT, "filter comment"),
+        (CURRENT_HEADER_END, "header"),
+    ] {
+        assert_eq!(
+            current.matches(part).count(),
+            1,
+            "{name} in the current 0003"
+        );
+    }
+    let first = current
+        .replace(CURRENT_FILTER_COMMENT, FIRST_FILTER_COMMENT)
+        .replace(CURRENT_HEADER_END, FIRST_HEADER_END);
+    let code = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| !l.trim_start().starts_with("--"))
+            .map(str::to_owned)
+            .collect()
+    };
+    assert_eq!(code(&first), code(current), "only comments changed in 0003");
+    first
+}
+
+/// Database with 0001, 0002 and 0003 as first committed, as a build of `ff1343f` left it.
+async fn database_on_first_0003(dir: &Path) -> SqlitePool {
+    let migrations = tempfile::tempdir().expect("migrations dir");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    for name in ["0001_schema_info.sql", "0002_contract_entities.sql"] {
+        std::fs::copy(src.join(name), migrations.path().join(name)).expect("copy migration");
+    }
+    let name = "0003_contract_links_and_history.sql";
+    let current = std::fs::read_to_string(src.join(name)).expect("read 0003");
+    std::fs::write(migrations.path().join(name), first_text_of_0003(&current))
+        .expect("write first 0003");
+    let options = SqliteConnectOptions::new()
+        .filename(dir.join(super::DB_FILE_NAME))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("old pool");
+    Migrator::new(migrations.path())
+        .await
+        .expect("old migrator")
+        .run(&pool)
+        .await
+        .expect("0001 to first 0003");
+    pool
+}
+
+fn current_checksum_of_0003() -> String {
+    let m = super::MIGRATOR
+        .iter()
+        .find(|m| m.version == 3 && !m.migration_type.is_down_migration())
+        .expect("0003");
+    m.checksum.iter().map(|b| format!("{b:02X}")).collect()
+}
+
+#[tokio::test]
+async fn open_accepts_a_database_on_0003_as_first_committed() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let old = database_on_first_0003(dir.path()).await;
+    assert_eq!(
+        text(
+            &old,
+            "SELECT hex(checksum) FROM _sqlx_migrations WHERE version = 3"
+        )
+        .await,
+        super::MIGRATION_0003_FIRST_CHECKSUM,
+        "the constant is the checksum sqlx stored for the first 0003"
+    );
+    assert_ne!(
+        super::MIGRATION_0003_FIRST_CHECKSUM,
+        current_checksum_of_0003()
+    );
+    ok(
+        &old,
+        "INSERT INTO projeto (id, nome) VALUES (1, 'MyHarness')",
+    )
+    .await;
+    old.close().await;
+
+    let db = Database::open(dir.path())
+        .await
+        .expect("no checksum error on a database already on 0003");
+    let p = db.pool();
+    assert_eq!(
+        count(p, "SELECT COUNT(*) FROM projeto").await,
+        1,
+        "data kept"
+    );
+    assert_eq!(
+        text(
+            p,
+            "SELECT hex(checksum) FROM _sqlx_migrations WHERE version = 3"
+        )
+        .await,
+        current_checksum_of_0003()
+    );
+    db.close().await;
+
+    let db = Database::open(dir.path()).await.expect("reopen");
+    assert_eq!(count(db.pool(), "SELECT COUNT(*) FROM projeto").await, 1);
+    db.close().await;
+}
+
+#[tokio::test]
+async fn open_still_refuses_any_other_checksum_of_0003_and_keeps_the_database() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db = Database::open(dir.path()).await.expect("open");
+    ok(
+        db.pool(),
+        "INSERT INTO projeto (id, nome) VALUES (1, 'MyHarness')",
+    )
+    .await;
+    ok(
+        db.pool(),
+        "UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 3",
+    )
+    .await;
+    db.close().await;
+
+    let err = Database::open(dir.path())
+        .await
+        .expect_err("unknown checksum of 0003");
+    assert!(matches!(err, super::DbError::Migrate(_)), "{err}");
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(dir.path().join(super::DB_FILE_NAME)))
+        .await
+        .expect("raw pool");
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM projeto").await,
+        1,
+        "not deleted"
+    );
+    pool.close().await;
 }
 
 // ---------------------------------------------------------------------------------------------
