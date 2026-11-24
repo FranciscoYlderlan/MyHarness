@@ -5,12 +5,13 @@
 use std::collections::BTreeMap;
 
 use my_harness_core::domain::integracao::{ErroIntegracao, MotivoOauthNaoConcluido};
+use my_harness_core::domain::segredo::TextoMascarado;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 macro_rules! catalogo {
     ($($variante:ident = $id:literal, $codigo:literal;)*) => {
-        /// Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-54).
+        /// Código no servidor de cada item do catálogo de erros e avisos (ERR-01 a ERR-55).
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Type)]
         pub enum CodigoErro {
             $(
@@ -97,6 +98,7 @@ catalogo! {
     LimiteDeContextoAbaixoDoMinimo = "ERR-52", "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO";
     IntegracaoFalhaInesperada = "ERR-53", "INTEGRACAO_FALHA_INESPERADA";
     GravacaoDesfeitaPelaMetade = "ERR-54", "GRAVACAO_DESFEITA_PELA_METADE";
+    FalhaInterna = "ERR-55", "FALHA_INTERNA";
 }
 
 /// Um item do catálogo com os valores do momento (`<x>` da mensagem).
@@ -125,8 +127,9 @@ impl ErroCatalogo {
     }
 }
 
-/// Erro de um comando. `catalogo` é a regra (o código diz o quê); `interno` é falha que
-/// o catálogo não cobre (ex.: o corpo provisório de um comando ainda sem núcleo).
+/// Erro de um comando. `catalogo` é a regra (o código diz o quê); falha inesperada do
+/// núcleo é o ERR-55 `FALHA_INTERNA` ([`ErroIpc::falha_interna`]). `interno` só resta no
+/// corpo provisório dos comandos ainda sem núcleo, até a T4 do integracoes-plano.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "tipo", rename_all = "snake_case")]
 pub enum ErroIpc {
@@ -149,6 +152,16 @@ impl std::fmt::Display for MotivoInterno {
         f.write_str(match self {
             MotivoInterno::NaoImplementado => "nao_implementado",
         })
+    }
+}
+
+impl ErroIpc {
+    /// ERR-55 `FALHA_INTERNA`: falha inesperada no próprio núcleo, com o `motivo` da
+    /// mensagem já mascarado (RN-04).
+    pub fn falha_interna(motivo: &TextoMascarado) -> Self {
+        ErroCatalogo::new(CodigoErro::FalhaInterna)
+            .com("motivo", motivo.as_str())
+            .into()
     }
 }
 
@@ -214,8 +227,6 @@ impl<T> ComAvisos<T> {
 mod tests {
     use std::collections::HashSet;
 
-    use my_harness_core::domain::segredo::TextoMascarado;
-
     use super::*;
 
     /// Tabela do `05-erros.md` (id e código no servidor), copiada à mão de propósito:
@@ -275,6 +286,7 @@ mod tests {
         ("ERR-52", "LIMITE_DE_CONTEXTO_ABAIXO_DO_MINIMO"),
         ("ERR-53", "INTEGRACAO_FALHA_INESPERADA"),
         ("ERR-54", "GRAVACAO_DESFEITA_PELA_METADE"),
+        ("ERR-55", "FALHA_INTERNA"),
     ];
 
     #[test]
@@ -334,6 +346,17 @@ mod tests {
                 "erro": { "codigo": "CONSUMO_INDISPONIVEL", "id": "ERR-41", "parametros": {} }
             })
         );
+        let json = serde_json::to_value(ErroIpc::falha_interna(&TextoMascarado::new(
+            "estado inesperado com ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        )))
+        .unwrap();
+        assert_eq!(json["tipo"], "catalogo");
+        assert_eq!(json["erro"]["codigo"], "FALHA_INTERNA");
+        assert_eq!(json["erro"]["id"], "ERR-55");
+        let motivo = json["erro"]["parametros"]["motivo"].as_str().unwrap();
+        assert!(motivo.starts_with("estado inesperado com "));
+        assert!(!motivo.contains("abcdefghijklmnop"));
+
         let json = serde_json::to_value(ErroIpc::Interno {
             motivo: MotivoInterno::NaoImplementado,
         })
