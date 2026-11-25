@@ -8,6 +8,7 @@ import { mockCommands } from "@/bindings";
 import type { IntegracaoMudou } from "@/lib/ipc";
 import { estadoInicial, reduzir } from "./estado";
 import { ProvedorDeIntegracoes, useIntegracoes } from ".";
+import { CARREGANDO_MINIMO_CONTRA_DUPLO_CLIQUE_MS } from "./provedor-de-integracoes";
 import type { Integracoes } from "./contexto";
 import {
   criarNucleoSimuladoDeIntegracoes,
@@ -619,6 +620,108 @@ describe("guarda de operação em andamento", () => {
     repetir("github");
     await waitFor(() => expect(tela.atual!.estado.github.integracao?.status).toBe("conectado"));
     expect(testesDoGithub).toBe(antes + 1);
+  });
+});
+
+describe("carregando mínimo contra duplo clique (B1)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  // Conta as chamadas de cada comando, com o núcleo simulado instantâneo.
+  function contarChamadas(nucleo: NucleoSimuladoDeIntegracoes) {
+    const chamadas = { testar: 0, conectar: 0, desconectar: 0 };
+    mockCommands({
+      ...nucleo.handlers,
+      testarIntegracao: (args) => {
+        chamadas.testar += 1;
+        return nucleo.handlers.testarIntegracao!(args);
+      },
+      conectarIntegracao: (args) => {
+        chamadas.conectar += 1;
+        return nucleo.handlers.conectarIntegracao!(args);
+      },
+      desconectarIntegracao: (args) => {
+        chamadas.desconectar += 1;
+        return nucleo.handlers.desconectarIntegracao!(args);
+      },
+    });
+    return chamadas;
+  }
+
+  const avancar = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+  it("Desconectar fica em carregando até o tempo mínimo, com o botão inativo no lugar", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes(todasConectadas);
+    const chamadas = contarChamadas(nucleo);
+    render(<MainWindow />);
+    await abrirPainel();
+    const c = cartao("GitHub");
+    const desconectar = within(c).getByRole("button", { name: "Desconectar" });
+    await waitFor(() => expect(desconectar).toBeEnabled());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+
+    act(() => desconectar.click());
+    // A ação começa na hora: o núcleo já respondeu.
+    await avancar(0);
+    expect(chamadas.desconectar).toBe(1);
+    expect(nucleo.estado("github").status).toBe("desconectado");
+    // O cartão segue em carregando, com a conta e os botões inativos no mesmo lugar.
+    expect(c).toHaveAttribute("data-situacao", "carregando");
+    expect(c).toHaveTextContent("desconectando");
+    expect(c).toHaveTextContent("FranciscoYlderlan");
+    expect(desconectar).toBeDisabled();
+    expect(within(c).queryByRole("button", { name: "Conectar" })).not.toBeInTheDocument();
+
+    // O segundo clique do duplo clique cai no botão inativo.
+    act(() => desconectar.click());
+    await avancar(CARREGANDO_MINIMO_CONTRA_DUPLO_CLIQUE_MS - 1);
+    expect(c).toHaveAttribute("data-situacao", "carregando");
+
+    // Logo depois do tempo mínimo, o resultado aparece.
+    await avancar(1);
+    expect(c).toHaveAttribute("data-situacao", "erro");
+    expect(c).toHaveTextContent("desconectado");
+    expect(within(c).getByRole("button", { name: "Conectar" })).toBeEnabled();
+    expect(chamadas).toEqual({ testar: chamadas.testar, conectar: 0, desconectar: 1 });
+  });
+
+  it("dois pedidos seguidos de cada ação, com o núcleo instantâneo, fazem uma chamada", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes(todasConectadas);
+    const chamadas = contarChamadas(nucleo);
+    const tela: { atual: Integracoes | null } = { atual: null };
+    function Espiao() {
+      tela.atual = useIntegracoes();
+      return null;
+    }
+    render(
+      <ProvedorDeIntegracoes>
+        <Espiao />
+      </ProvedorDeIntegracoes>,
+    );
+    await waitFor(() => expect(tela.atual!.estado.github.integracao).not.toBeNull());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+
+    // O segundo pedido chega depois da resposta do núcleo e antes do tempo mínimo.
+    const duasVezes = async (acao: () => void) => {
+      act(acao);
+      await avancar(0);
+      act(acao);
+      await avancar(CARREGANDO_MINIMO_CONTRA_DUPLO_CLIQUE_MS);
+    };
+
+    await duasVezes(() => tela.atual!.checar("github"));
+    expect(chamadas.testar).toBe(1);
+    await duasVezes(() => tela.atual!.desconectar("github"));
+    expect(chamadas.desconectar).toBe(1);
+    await duasVezes(() => tela.atual!.conectar("github"));
+    expect(chamadas.conectar).toBe(1);
+    expect(tela.atual!.estado.github.integracao?.status).toBe("conectado");
+
+    nucleo.falharChecagem("github", falhaInesperada("github", "erro de rede"));
+    await duasVezes(() => tela.atual!.checar("github"));
+    expect(tela.atual!.estado.github.erro).not.toBeNull();
+    const antes = chamadas.testar;
+    await duasVezes(() => tela.atual!.repetir("github"));
+    expect(chamadas.testar).toBe(antes + 1);
   });
 });
 
