@@ -370,3 +370,155 @@ async fn desconectar_durante_o_device_flow_cancela_e_devolve_o_estado_guardado()
     esperar_instrucoes(&recebidas_b, 1).await;
     assert_eq!(m.falso.pedidos_de_codigo().len(), 2);
 }
+
+/// Claude CLI falso em shell: o `auth login` conta as vezes que rodou, mostra o link e
+/// espera o arquivo `liberar` (o Humano concluindo no navegador) para logar.
+#[cfg(unix)]
+struct ClaudeEmShell {
+    pasta: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl ClaudeEmShell {
+    fn novo() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let pasta = tempfile::tempdir().unwrap();
+        let executavel = pasta.path().join("claude");
+        let script = r#"#!/bin/sh
+d="$(dirname "$0")"
+case "$1 $2" in
+  "--version ") echo "2.1.0 (Claude Code)" ;;
+  "auth status")
+    if [ -f "$d/logado" ]; then echo '{"loggedIn": true, "email": "pessoa@exemplo.com"}'
+    else echo '{"loggedIn": false}'; exit 1; fi ;;
+  "auth login")
+    echo x >> "$d/logins"
+    echo "https://claude.ai/oauth/authorize?x"
+    while [ ! -f "$d/liberar" ]; do sleep 0.05; done
+    touch "$d/logado"
+    echo "Login successful." ;;
+esac
+"#;
+        std::fs::write(&executavel, script).unwrap();
+        std::fs::set_permissions(&executavel, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self { pasta }
+    }
+
+    fn integracao(&self) -> Arc<dyn IntegracaoCore> {
+        use crate::infra::claude::{ClaudeCli, ConfigClaudeCli};
+        Arc::new(ClaudeCli::new(ConfigClaudeCli {
+            executavel: Some(self.pasta.path().join("claude")),
+            caminho_busca: Some(Default::default()),
+            tempo_checagem: Duration::from_secs(10),
+            tempo_login: Duration::from_secs(20),
+        }))
+    }
+
+    fn logins(&self) -> usize {
+        std::fs::read_to_string(self.pasta.path().join("logins"))
+            .map(|t| t.lines().count())
+            .unwrap_or(0)
+    }
+
+    fn liberar(&self) {
+        std::fs::write(self.pasta.path().join("liberar"), "").unwrap();
+    }
+}
+
+// Claude CLI: dois `conectar` ao mesmo tempo rodam um `/login` só; o segundo recebe as
+// mesmas mensagens e os dois terminam `conectado`.
+#[cfg(unix)]
+#[tokio::test]
+async fn ac_157_claude_cli_conectar_repetido_roda_um_login_so() {
+    let cli = ClaudeEmShell::novo();
+    let m = Montado::novo(cli.integracao());
+
+    let (canal_a, recebidas_a) = canal();
+    let (canal_b, recebidas_b) = canal();
+    let n = m.nucleo.clone();
+    let primeiro = tokio::spawn(async move {
+        n.conectar_integracao(TipoIntegracao::ClaudeCli, canal_a)
+            .await
+    });
+    esperar_instrucoes(&recebidas_a, 2).await;
+    let n = m.nucleo.clone();
+    let segundo = tokio::spawn(async move {
+        n.conectar_integracao(TipoIntegracao::ClaudeCli, canal_b)
+            .await
+    });
+    esperar_instrucoes(&recebidas_b, 2).await;
+    assert_eq!(
+        m.operacoes_com("conectar Claude CLI repetido: reaproveita"),
+        1
+    );
+
+    cli.liberar();
+    let primeiro = primeiro.await.unwrap().unwrap();
+    let segundo = segundo.await.unwrap().unwrap();
+    for estado in [&primeiro, &segundo] {
+        assert_eq!(estado.status, StatusIntegracao::Conectado);
+        assert_eq!(estado.conta.as_deref(), Some("pessoa@exemplo.com"));
+    }
+    assert_eq!(cli.logins(), 1, "um /login só");
+    let mensagens = |r: &Mutex<Vec<serde_json::Value>>| {
+        r.lock()
+            .unwrap()
+            .iter()
+            .map(|v| v["texto"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(mensagens(&recebidas_a), mensagens(&recebidas_b));
+    assert_eq!(
+        mensagens(&recebidas_a).last().map(String::as_str),
+        Some("Login successful.")
+    );
+    assert_eq!(m.avisos(TipoCore::ClaudeCli), [StatusCore::Conectado]);
+}
+
+// B2 no Claude CLI: "Desconectar" durante o `/login` cancela o login; o `conectar`
+// devolve `desconectado`, o mesmo estado que o núcleo guarda, e nenhum aviso diz
+// `conectado`.
+#[cfg(unix)]
+#[tokio::test]
+async fn desconectar_durante_o_login_cancela_e_devolve_o_estado_guardado() {
+    let cli = ClaudeEmShell::novo();
+    let m = Montado::novo(cli.integracao());
+
+    let (canal_a, recebidas) = canal();
+    let n = m.nucleo.clone();
+    let conexao = tokio::spawn(async move {
+        n.conectar_integracao(TipoIntegracao::ClaudeCli, canal_a)
+            .await
+    });
+    esperar_instrucoes(&recebidas, 2).await;
+
+    let desconectado = m
+        .nucleo
+        .desconectar_integracao(TipoIntegracao::ClaudeCli)
+        .await
+        .unwrap();
+    assert_eq!(desconectado.status, StatusIntegracao::Desconectado);
+    let devolvido = tokio::time::timeout(Duration::from_secs(5), conexao)
+        .await
+        .expect("o conectar não parou no cancelamento")
+        .unwrap()
+        .unwrap();
+    assert_eq!(devolvido, desconectado);
+    assert_eq!(
+        m.operacoes_com("desconectar Claude CLI durante a conexão"),
+        1
+    );
+
+    // O Humano conclui no navegador depois: o login já foi cancelado e nada muda.
+    cli.liberar();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(m.avisos(TipoCore::ClaudeCli), [StatusCore::Desconectado]);
+    assert_eq!(
+        m.nucleo
+            .testar_integracao(TipoIntegracao::ClaudeCli)
+            .await
+            .unwrap(),
+        desconectado
+    );
+}
