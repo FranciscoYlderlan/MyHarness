@@ -1,5 +1,5 @@
 //! SQLite storage: one database file in the app data directory, WAL mode,
-//! versioned migrations (`src-tauri/migrations/`) applied on every open.
+//! versioned migrations (`crates/app/migrations/`) applied on every open.
 //!
 //! `0002_contract_entities.sql` holds one table per contract entity that lives in SQLite
 //! (`Anexos/contrato/02-entidades.md`) and `0003_contract_links_and_history.sql` brings it to

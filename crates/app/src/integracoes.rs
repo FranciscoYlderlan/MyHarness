@@ -26,7 +26,7 @@ use my_harness_core::domain::integracao::{
 };
 use my_harness_core::domain::segredo::{Segredo, TextoMascarado};
 
-use super::erro::{CodigoErro, ErroIpc};
+use crate::erro::{CodigoErro, ErroIpc};
 use crate::infra;
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ use my_harness_core::domain::integracao::{
 use my_harness_core::domain::segredo::{MASCARA, Segredo};
 
 use super::*;
-use crate::commands::erro::{CodigoErro, ErroCatalogo, ErroIpc};
+use crate::erro::{CodigoErro, ErroCatalogo, ErroIpc};
 use crate::infra::claude::{ClaudeCli, ConfigClaudeCli};
 use crate::infra::github::falso::GitHubFalso;
 use crate::infra::github::{ConfigGitHub, GitHub};
@@ -439,7 +439,7 @@ async fn listar_e_testar_trazem_as_notas_indexadas_da_obsidian_cli() {
         avisos.lock().unwrap().last().unwrap().notas_indexadas,
         Some(75)
     );
-    let dto = crate::commands::dto::Integracao::from(listada);
+    let dto = crate::dto::Integracao::from(listada);
     assert_eq!(dto.notas_indexadas, Some(75));
 }
 
