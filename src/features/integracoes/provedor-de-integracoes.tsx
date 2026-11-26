@@ -120,13 +120,21 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
       });
 
     // `listar` já checa as três e traz o erro de cada uma (M-46); só se ele falhar a
-    // tela checa uma a uma, para cada cartão mostrar a falha.
+    // tela checa uma a uma, para cada cartão mostrar a falha. O resultado respeita a guarda:
+    // a integração com operação iniciada depois do pedido fica com a resposta dela (o
+    // `listar` não apaga o código do device flow de um `conectar` em andamento).
+    const vezNoPedido = { ...vez.current };
     void (async () => {
       try {
         const lista = await commands.listarIntegracoes();
         if (!montado.current) return;
         if (lista.status === "ok") {
-          for (const integracao of lista.data) despachar({ tipo: "recebeu", integracao });
+          for (const integracao of lista.data) {
+            const tipo = integracao.tipo;
+            if (andamento.current[tipo] !== null || vez.current[tipo] !== vezNoPedido[tipo])
+              continue;
+            despachar({ tipo: "mudou", integracao });
+          }
           return;
         }
       } catch {
