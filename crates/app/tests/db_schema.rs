@@ -32,7 +32,7 @@ async fn seeded() -> Fixture {
         "INSERT INTO chat (id, projeto, limite_tokens, status) VALUES (1, 1, 100000, 'ativo')",
         "INSERT INTO chat (id, projeto, limite_tokens, status) VALUES (2, 1, 100000, 'encerrado')",
         "INSERT INTO plano_delegacao (id, chat, versao, status) VALUES (1, 1, 1, 'proposto')",
-        "INSERT INTO tarefa (id, plano, faz, toca_em, paralelo, pronto_quando, prova, papel) VALUES (1, 1, 'Esquema', '[\"src-tauri/migrations/\"]', 1, 'testes passam', 'cargo test', 'funcionalidade')",
+        "INSERT INTO tarefa (id, plano, faz, toca_em, paralelo, pronto_quando, prova, papel) VALUES (1, 1, 'Esquema', '[\"crates/app/migrations/\"]', 1, 'testes passam', 'cargo test', 'funcionalidade')",
         "INSERT INTO execucao (id, chat, tarefa, papel, modelo, prompt_versao, worktree, branch, status) VALUES (1, 1, 1, 'funcionalidade', 'opus', 1, '/w/t4', 'feat/RF-01-esquema', 'rodando')",
         "INSERT INTO execucao (id, chat, tarefa, papel, modelo, prompt_versao, status) VALUES (2, 1, 1, 'teste', 'opus', 1, 'rodando')",
         "INSERT INTO relatorio (id, execucao, resultado, o_que_fez, prova) VALUES (1, 1, 'concluído', 'migração', 'cargo test')",

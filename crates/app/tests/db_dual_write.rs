@@ -66,7 +66,7 @@ fn log(db: &Database) -> LogTarget<'_> {
 }
 
 const INSERT_TAREFA: &str = "INSERT INTO tarefa (plano, faz, toca_em, paralelo, pronto_quando, prova, papel) \
-     VALUES (1, 'Esquema', '[\"src-tauri/migrations/\"]', 0, 'testes passam', 'cargo test', 'funcionalidade')";
+     VALUES (1, 'Esquema', '[\"crates/app/migrations/\"]', 0, 'testes passam', 'cargo test', 'funcionalidade')";
 
 async fn count(db: &Database, table: &str) -> i64 {
     let (n,): (i64,) = sqlx::query_as(AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
