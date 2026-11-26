@@ -2,7 +2,8 @@ import { emit } from "@tauri-apps/api/event";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { mockCommands } from "@/bindings";
 import type { ChatMudou, EventoExecucao } from "@/bindings";
-import { canalDeExecucao, commands, ouvir } from ".";
+import { canalDeExecucao, commands, ouvir, validarResposta } from ".";
+import { integracao } from "./esquemas";
 
 afterEach(() => clearMocks());
 
@@ -91,5 +92,55 @@ describe("porta IPC", () => {
     canal.onmessage({ tipo: "texto" } as unknown as EventoExecucao);
     expect(recebidos).toEqual([{ tipo: "texto", texto: "olá" }]);
     expect(invalidos).toHaveLength(1);
+  });
+
+  it("resposta de comando passa pelo zod: fora do contrato vira o ERR-55", () => {
+    const valida = {
+      tipo: "obsidian_cli",
+      status: "conectado",
+      conta: null,
+      versao: null,
+      notas_indexadas: 75,
+      erro: null,
+    };
+    const invalidos: unknown[] = [];
+    const aoInvalido = (_origem: string, _erro: unknown, bruto: unknown) => invalidos.push(bruto);
+    const err55 = {
+      status: "error",
+      error: {
+        tipo: "catalogo",
+        erro: {
+          codigo: "FALHA_INTERNA",
+          id: "ERR-55",
+          parametros: { motivo: "a resposta do núcleo está fora do contrato" },
+        },
+      },
+    };
+
+    expect(
+      validarResposta("testar", integracao, { status: "ok", data: valida }, aoInvalido),
+    ).toEqual({ status: "ok", data: valida });
+    const negativa = { ...valida, notas_indexadas: -5 };
+    expect(
+      validarResposta("testar", integracao, { status: "ok", data: negativa }, aoInvalido),
+    ).toEqual(err55);
+
+    const erro = {
+      tipo: "catalogo",
+      erro: { codigo: "OBSIDIAN_FECHADO", id: "ERR-03", parametros: {} },
+    };
+    expect(
+      validarResposta("testar", integracao, { status: "error", error: erro }, aoInvalido),
+    ).toEqual({ status: "error", error: erro });
+    const erroForaDoCatalogo = { tipo: "catalogo", erro: { codigo: "INVENTADO", id: "ERR-99" } };
+    expect(
+      validarResposta(
+        "testar",
+        integracao,
+        { status: "error", error: erroForaDoCatalogo },
+        aoInvalido,
+      ),
+    ).toEqual(err55);
+    expect(invalidos).toEqual([negativa, erroForaDoCatalogo]);
   });
 });
