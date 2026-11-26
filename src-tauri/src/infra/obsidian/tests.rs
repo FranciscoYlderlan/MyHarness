@@ -62,8 +62,13 @@ async fn aberto_conecta_e_conta_as_notas_do_cofre() {
             json!({ "vault": COFRE, "ext": "md", "total": true })
         )]
     );
+    // M-46: o número chega pelo trait, no estado da integração (AC-128 na API).
     let estado = obsidian.verificar().await.unwrap();
     assert_eq!(estado.status, StatusIntegracao::Conectado);
+    assert_eq!(estado.notas_indexadas, Some(128));
+    assert_eq!(status.estado.notas_indexadas, Some(128));
+    let estado = obsidian.conectar(&SemInstrucao).await.unwrap();
+    assert_eq!(estado.notas_indexadas, Some(128));
 }
 
 #[tokio::test]

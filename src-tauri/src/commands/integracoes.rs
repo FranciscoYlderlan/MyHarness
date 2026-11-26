@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use async_trait::async_trait;
 use my_harness_core::application::integracao::{InstrucaoConexao, Integracao, ObservadorConexao};
 use my_harness_core::domain::integracao::{
-    ErroIntegracao, EstadoIntegracao, TipoIntegracao, exigir_conectada,
+    ErroIntegracao, EstadoIntegracao, StatusIntegracao, TipoIntegracao, exigir_conectada,
 };
 use my_harness_core::domain::segredo::{Segredo, TextoMascarado};
 
@@ -316,6 +316,11 @@ impl ServicoIntegracoes {
                     ))
                 }
             })
+            .map(|mut estado| {
+                // Erro que o adaptador pôs no estado também passa pela máscara (RN-04).
+                estado.erro = estado.erro.map(|erro| self.mascara.mascarar_erro(erro));
+                estado
+            })
             .map_err(|erro| self.mascara.mascarar_erro(erro));
         let estado = match &resultado {
             Ok(estado) => estado.clone(),
@@ -335,37 +340,38 @@ impl ServicoIntegracoes {
     }
 
     /// Estado de uma integração sem pedir nada ao Humano. Desconectada pelo Humano:
-    /// `desconectado`, sem checar.
-    async fn checar(&self, tipo: TipoIntegracao) -> Result<EstadoIntegracao, ErroIpc> {
+    /// `desconectado`, sem checar. O erro de fora é o da integração (o ERR do catálogo
+    /// que explica o estado) ou, sem a integração ligada, o ERR-55.
+    async fn checar(
+        &self,
+        tipo: TipoIntegracao,
+    ) -> Result<Result<EstadoIntegracao, ErroIntegracao>, ErroIpc> {
         let integracao = self.integracao(tipo)?;
         if self.desconectada_pelo_humano(tipo) {
-            let estado = EstadoIntegracao::novo(
-                tipo,
-                my_harness_core::domain::integracao::StatusIntegracao::Desconectado,
-            );
+            let estado = EstadoIntegracao::novo(tipo, StatusIntegracao::Desconectado);
             (self.aviso)(&estado);
-            return Ok(estado);
+            return Ok(Ok(estado));
         }
-        self.rodar(
-            tipo,
-            "verificar",
-            async move { integracao.verificar().await },
-        )
-        .await
-        .map_err(ErroIpc::from)
+        Ok(self
+            .rodar(
+                tipo,
+                "verificar",
+                async move { integracao.verificar().await },
+            )
+            .await)
     }
 
     /// UC-01 passo 1: o estado das três, na ordem do painel. A falha de uma vira o
-    /// estado final do erro dela (o motivo fica no registro) e não esconde as outras.
+    /// estado final do erro dela, com o erro no campo `erro` (M-46: ex.: `não
+    /// instalado` com ERR-01, `desconectado` com o motivo do ERR-53), e não esconde as
+    /// outras. Integração que o app não ligou (ERR-55, no registro) sai `desconectado`.
     pub async fn listar(&self) -> Vec<EstadoIntegracao> {
         let mut estados = Vec::with_capacity(TipoIntegracao::TODAS.len());
         for tipo in TipoIntegracao::TODAS {
             let estado = match self.checar(tipo).await {
-                Ok(estado) => estado,
-                Err(_) => EstadoIntegracao::novo(
-                    tipo,
-                    my_harness_core::domain::integracao::StatusIntegracao::Desconectado,
-                ),
+                Ok(Ok(estado)) => estado,
+                Ok(Err(erro)) => EstadoIntegracao::a_partir_do_erro(&erro),
+                Err(_) => EstadoIntegracao::novo(tipo, StatusIntegracao::Desconectado),
             };
             estados.push(estado);
         }
@@ -374,7 +380,7 @@ impl ServicoIntegracoes {
 
     /// "Testar conexão" (CMP-11): o estado atual, ou o erro do catálogo que o explica.
     pub async fn testar(&self, tipo: TipoIntegracao) -> Result<EstadoIntegracao, ErroIpc> {
-        self.checar(tipo).await
+        self.checar(tipo).await?.map_err(ErroIpc::from)
     }
 
     /// "Conectar" (UC-01 passos 2 e 3): tira a marca de desconectada e conecta; as
@@ -419,7 +425,7 @@ impl ServicoIntegracoes {
     /// RN-08: segue só com a integração `conectado`; senão, ERR-05, ERR-06 ou ERR-07
     /// (ou o erro que impediu a checagem).
     pub async fn exigir(&self, tipo: TipoIntegracao) -> Result<(), ErroIpc> {
-        let estado = self.checar(tipo).await?;
+        let estado = self.testar(tipo).await?;
         exigir_conectada(&estado).map_err(ErroIpc::from)
     }
 }
@@ -493,7 +499,7 @@ impl Integracao for IntegracaoSemConfiguracao {
     async fn desconectar(&self) -> Result<EstadoIntegracao, ErroIntegracao> {
         Ok(EstadoIntegracao::novo(
             self.tipo,
-            my_harness_core::domain::integracao::StatusIntegracao::Desconectado,
+            StatusIntegracao::Desconectado,
         ))
     }
 }

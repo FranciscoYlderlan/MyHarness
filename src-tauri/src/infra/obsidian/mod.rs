@@ -4,7 +4,7 @@
 //! responde), listar as ferramentas e chamar uma delas no cofre do projeto (o Obsidian
 //! está aberto e o cofre é acessível). Se o servidor expõe [`FERRAMENTA_CONTAGEM`]
 //! (equivalente a `obsidian files ext=md total`), a mesma chamada devolve o número de
-//! notas indexadas (AC-128); senão a sonda é um [`FERRAMENTA_BUSCA`] com `limit: 1` e o
+//! notas indexadas (AC-128), que vai no próprio estado da integração (M-46); senão a sonda é um [`FERRAMENTA_BUSCA`] com `limit: 1` e o
 //! número fica `None`.
 //!
 //! Como a CLI responde (nota "Obsidian CLI via MCP não carrega", no Vault):
@@ -133,9 +133,9 @@ impl ErroObsidian {
         TipoIntegracao::ObsidianCli
     }
 
-    /// Estado final: Obsidian CLI `desconectado` (ERR-03 e ERR-53).
+    /// Estado final: Obsidian CLI `desconectado` (ERR-03 e ERR-53), com o erro (M-46).
     pub fn estado_final(&self) -> EstadoIntegracao {
-        EstadoIntegracao::novo(TipoIntegracao::ObsidianCli, StatusIntegracao::Desconectado)
+        EstadoIntegracao::a_partir_do_erro(&self.clone().into())
     }
 
     /// Motivo do ERR-53 (`<motivo>` da mensagem), mascarado.
@@ -283,7 +283,8 @@ impl ObsidianCli {
             None
         };
         Ok(StatusObsidian {
-            estado: EstadoIntegracao::conectado(TipoIntegracao::ObsidianCli, None, None),
+            estado: EstadoIntegracao::conectado(TipoIntegracao::ObsidianCli, None, None)
+                .com_notas_indexadas(notas_indexadas),
             cofre: cofre.clone(),
             notas_indexadas,
         })
@@ -316,7 +317,8 @@ impl From<ErroObsidian> for ErroIntegracao {
     }
 }
 
-/// Converte para o contrato do trait: ERR-03 e ERR-53 saem como erro, com o motivo.
+/// Converte para o contrato do trait: o estado já leva o número de notas (AC-128);
+/// ERR-03 e ERR-53 saem como erro, com o motivo.
 fn para_o_trait(
     resultado: Result<StatusObsidian, ErroObsidian>,
 ) -> Result<EstadoIntegracao, ErroIntegracao> {

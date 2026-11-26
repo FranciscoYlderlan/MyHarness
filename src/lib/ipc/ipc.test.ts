@@ -10,7 +10,14 @@ describe("porta IPC", () => {
   it("comando devolve o resultado tipado e o erro do catálogo", async () => {
     mockCommands({
       listarIntegracoes: () => [
-        { tipo: "claude_cli", status: "desconectado", conta: null, versao: null },
+        {
+          tipo: "claude_cli",
+          status: "desconectado",
+          conta: null,
+          versao: null,
+          notas_indexadas: null,
+          erro: null,
+        },
       ],
       lerConsumo: () => {
         throw {
@@ -23,7 +30,16 @@ describe("porta IPC", () => {
     const integracoes = await commands.listarIntegracoes();
     expect(integracoes).toEqual({
       status: "ok",
-      data: [{ tipo: "claude_cli", status: "desconectado", conta: null, versao: null }],
+      data: [
+        {
+          tipo: "claude_cli",
+          status: "desconectado",
+          conta: null,
+          versao: null,
+          notas_indexadas: null,
+          erro: null,
+        },
+      ],
     });
 
     const consumo = await commands.lerConsumo();

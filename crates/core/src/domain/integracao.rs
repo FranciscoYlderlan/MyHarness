@@ -81,7 +81,8 @@ impl fmt::Display for StatusIntegracao {
 }
 
 /// Retrato de uma integração: os campos de ENT-13 que podem ir ao SQLite e à tela
-/// (tipo, status, conta e versão). A credencial fica de fora de propósito (RN-04).
+/// (tipo, status, conta, versão, notas indexadas e erro). A credencial fica de fora de
+/// propósito (RN-04).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EstadoIntegracao {
     /// Qual integração.
@@ -92,37 +93,54 @@ pub struct EstadoIntegracao {
     pub conta: Option<String>,
     /// Versão da ferramenta, quando houver (UC-01 FA-01).
     pub versao: Option<String>,
+    /// Número de notas `.md` do cofre checado; só Obsidian CLI `conectado` (AC-128, M-46).
+    pub notas_indexadas: Option<u64>,
+    /// O ERR do catálogo que explica o status, quando ele vem de uma falha (M-46); o
+    /// texto livre dele já vem mascarado (RN-04).
+    pub erro: Option<ErroIntegracao>,
 }
 
 impl EstadoIntegracao {
-    /// Estado sem conta nem versão.
+    /// Estado sem conta, versão, notas nem erro.
     pub fn novo(tipo: TipoIntegracao, status: StatusIntegracao) -> Self {
         Self {
             tipo,
             status,
             conta: None,
             versao: None,
+            notas_indexadas: None,
+            erro: None,
         }
     }
 
     /// Estado `conectado` com conta e versão, quando houver.
     pub fn conectado(tipo: TipoIntegracao, conta: Option<String>, versao: Option<String>) -> Self {
         Self {
-            tipo,
-            status: StatusIntegracao::Conectado,
             conta,
             versao,
+            ..Self::novo(tipo, StatusIntegracao::Conectado)
         }
     }
 
-    /// Estado que resulta de um erro de verificação ou conexão (Estado final do ERR).
-    /// Erro que não muda o status (ERR-05, ERR-06, ERR-07) devolve `desconectado`,
-    /// que é a condição que os dispara.
+    /// O mesmo estado com o número de notas indexadas (só Obsidian CLI `conectado`;
+    /// fora disso o número é descartado, como manda o ENT-13).
+    pub fn com_notas_indexadas(mut self, notas: Option<u64>) -> Self {
+        let pode = self.tipo == TipoIntegracao::ObsidianCli && self.status.esta_conectado();
+        self.notas_indexadas = notas.filter(|_| pode);
+        self
+    }
+
+    /// Estado que resulta de um erro de verificação ou conexão (Estado final do ERR),
+    /// com o erro guardado em `erro` (M-46). Erro que não muda o status (ERR-05, ERR-06,
+    /// ERR-07) devolve `desconectado`, que é a condição que os dispara.
     pub fn a_partir_do_erro(erro: &ErroIntegracao) -> Self {
         let status = erro
             .status_resultante()
             .unwrap_or(StatusIntegracao::Desconectado);
-        Self::novo(erro.integracao(), status)
+        Self {
+            erro: Some(erro.clone()),
+            ..Self::novo(erro.integracao(), status)
+        }
     }
 }
 
@@ -173,7 +191,7 @@ pub enum ErroIntegracao {
     /// ERR-53: erro genérico das integrações (UC-01 FE-04): qualquer falha ao checar,
     /// conectar ou desconectar que não tem ERR próprio (tempo esgotado, saída ilegível,
     /// rede, cofre não encontrado pela Obsidian CLI). O motivo já vem mascarado (RN-04)
-    /// e vai à mensagem e ao Log (ENT-12).
+    /// e vai à mensagem e ao registro do núcleo (M-48).
     #[error("Falha inesperada com {integracao}: {motivo}. Tente de novo.")]
     FalhaInesperada {
         /// Integração em que a falha aconteceu.
@@ -455,13 +473,36 @@ mod tests {
     }
 
     #[test]
-    fn estado_a_partir_do_erro() {
+    fn estado_a_partir_do_erro_guarda_o_erro() {
         let e = EstadoIntegracao::a_partir_do_erro(&ErroIntegracao::ClaudeCliNaoInstalado);
-        assert_eq!(
-            e,
-            EstadoIntegracao::novo(TipoIntegracao::ClaudeCli, StatusIntegracao::NaoInstalado)
-        );
+        assert_eq!(e.tipo, TipoIntegracao::ClaudeCli);
+        assert_eq!(e.status, StatusIntegracao::NaoInstalado);
+        assert_eq!(e.erro, Some(ErroIntegracao::ClaudeCliNaoInstalado));
+        assert_eq!((e.conta, e.versao, e.notas_indexadas), (None, None, None));
         let e = EstadoIntegracao::a_partir_do_erro(&ErroIntegracao::GithubDesconectado);
         assert_eq!(e.status, StatusIntegracao::Desconectado);
+        assert_eq!(e.erro, Some(ErroIntegracao::GithubDesconectado));
+        assert_eq!(
+            EstadoIntegracao::novo(TipoIntegracao::GitHub, StatusIntegracao::Conectado).erro,
+            None
+        );
+    }
+
+    #[test]
+    fn notas_indexadas_so_na_obsidian_cli_conectada() {
+        let obsidian = EstadoIntegracao::conectado(TipoIntegracao::ObsidianCli, None, None);
+        assert_eq!(
+            obsidian
+                .clone()
+                .com_notas_indexadas(Some(75))
+                .notas_indexadas,
+            Some(75)
+        );
+        assert_eq!(obsidian.com_notas_indexadas(None).notas_indexadas, None);
+        let fechada =
+            EstadoIntegracao::novo(TipoIntegracao::ObsidianCli, StatusIntegracao::Desconectado);
+        assert_eq!(fechada.com_notas_indexadas(Some(75)).notas_indexadas, None);
+        let github = EstadoIntegracao::conectado(TipoIntegracao::GitHub, None, None);
+        assert_eq!(github.com_notas_indexadas(Some(75)).notas_indexadas, None);
     }
 }

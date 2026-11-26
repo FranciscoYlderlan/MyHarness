@@ -1,5 +1,5 @@
-// Liga a tela das integrações ao núcleo, só pelo contrato IPC (`@/lib/ipc`): lista e checa
-// as três ao abrir, ouve `integracao-mudou` e roda conectar e desconectar com o canal de
+// Liga a tela das integrações ao núcleo, só pelo contrato IPC (`@/lib/ipc`): lista as três
+// ao abrir, ouve `integracao-mudou` e roda conectar e desconectar com o canal de
 // instruções. Toda falha vira um item do catálogo no cartão da integração.
 import { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
 import { canalDeConexao, commands, ouvir } from "@/lib/ipc";
@@ -106,15 +106,18 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
         // Sem núcleo (tela fora do app): os comandos abaixo mostram a falha nos cartões.
       });
 
+    // `listar` já checa as três e traz o erro de cada uma (M-46); só se ele falhar a
+    // tela checa uma a uma, para cada cartão mostrar a falha.
     void (async () => {
       try {
         const lista = await commands.listarIntegracoes();
         if (!montado.current) return;
         if (lista.status === "ok") {
           for (const integracao of lista.data) despachar({ tipo: "recebeu", integracao });
+          return;
         }
       } catch {
-        // A checagem de cada integração, logo abaixo, mostra o erro.
+        // Sem núcleo: a checagem de cada integração, logo abaixo, mostra o erro.
       }
       if (montado.current) checarTodas();
     })();

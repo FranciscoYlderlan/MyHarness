@@ -219,23 +219,28 @@ async fn qualquer_falha_nao_catalogada_vira_err_53_com_o_motivo_mascarado_no_reg
                 assert_eq!(entrada.motivo.as_str(), motivo, "{contexto}");
                 assert!(!entrada.to_string().contains(TOKEN), "{contexto}");
 
-                // Estado final do ERR-53: desconectado, avisado à tela.
+                // Estado final do ERR-53: desconectado, avisado à tela com o erro (M-46).
                 let ultimo = avisos.lock().unwrap().last().cloned().unwrap();
                 assert_eq!(
-                    ultimo,
-                    EstadoIntegracao::novo(tipo, StatusIntegracao::Desconectado)
+                    (ultimo.tipo, ultimo.status),
+                    (tipo, StatusIntegracao::Desconectado)
                 );
+                let no_estado = ultimo.erro.as_ref().expect("erro no estado");
+                assert_eq!(ErroCatalogo::from(no_estado), erro, "{contexto}");
                 casos += 1;
             }
         }
-        // `listar` não falha: cada falha vira o estado e vai ao registro.
+        // `listar` não falha: cada falha vira o estado, com o ERR-53 e o motivo mascarado
+        // no campo `erro` (M-46), e vai ao registro.
         let antes = registro.entradas().len();
         let estados = servico.listar().await;
-        assert!(
-            estados
-                .iter()
-                .all(|e| e.status == StatusIntegracao::Desconectado)
-        );
+        for estado in &estados {
+            assert_eq!(estado.status, StatusIntegracao::Desconectado);
+            let erro = ErroCatalogo::from(estado.erro.as_ref().expect("erro no estado"));
+            assert_eq!(erro.codigo, CodigoErro::IntegracaoFalhaInesperada);
+            assert!(!erro.parametros["motivo"].contains(TOKEN));
+            assert!(!erro.parametros["motivo"].is_empty());
+        }
         assert_eq!(registro.entradas().len(), antes + 3);
     }
     assert_eq!(casos, 12);
@@ -349,10 +354,93 @@ async fn listar_devolve_o_estado_real_das_tres() {
         ]
     );
     assert_eq!(estados[0].versao.as_deref(), Some("1.0"));
+    assert_eq!(estados[0].erro, None);
+    // M-46: o erro que explica cada estado vem junto, para a tela mostrar o motivo.
+    assert_eq!(estados[1].erro.as_ref().map(|e| e.id()), Some("ERR-03"));
+    let github = ErroCatalogo::from(estados[2].erro.as_ref().unwrap());
+    assert_eq!(github.id, "ERR-53");
+    assert!(!github.parametros["motivo"].contains(TOKEN));
     assert_eq!(avisos.lock().unwrap().len(), 3);
     // ERR-03 é catalogado: não vai ao registro; o token recusado (ERR-53), sim.
     let codigos: Vec<_> = registro.entradas().iter().map(|e| e.codigo).collect();
     assert_eq!(codigos, [CodigoErro::IntegracaoFalhaInesperada]);
+}
+
+// Verificação da T4: `listar` mostra `não instalado` (ERR-01), não `desconectado`; o
+// estado de cada falha catalogada é o da coluna "Estado final" do catálogo, com o erro.
+#[tokio::test]
+async fn listar_usa_o_estado_final_do_erro() {
+    let claude = Falsa::nova(
+        TipoIntegracao::ClaudeCli,
+        Comportamento::Erro(ErroIntegracao::ClaudeCliNaoInstalado),
+    );
+    let obsidian = Falsa::nova(
+        TipoIntegracao::ObsidianCli,
+        Comportamento::Erro(ErroIntegracao::inesperada(
+            TipoIntegracao::ObsidianCli,
+            "cofre myHarness-vault não encontrado pela Obsidian CLI",
+        )),
+    );
+    let github = Falsa::nova(
+        TipoIntegracao::GitHub,
+        Comportamento::Erro(ErroIntegracao::GithubOauthNaoConcluido(
+            my_harness_core::domain::integracao::MotivoOauthNaoConcluido::Expirado,
+        )),
+    );
+    let (servico, registro, _) = montar(vec![claude, obsidian, github]);
+
+    let estados = servico.listar().await;
+
+    assert_eq!(estados[0].status, StatusIntegracao::NaoInstalado);
+    assert_eq!(estados[0].erro, Some(ErroIntegracao::ClaudeCliNaoInstalado));
+    assert_eq!(estados[1].status, StatusIntegracao::Desconectado);
+    let motivo = ErroCatalogo::from(estados[1].erro.as_ref().unwrap());
+    assert_eq!(
+        motivo.parametros["motivo"],
+        "cofre myHarness-vault não encontrado pela Obsidian CLI"
+    );
+    assert_eq!(estados[2].status, StatusIntegracao::Desconectado);
+    assert_eq!(estados[2].erro.as_ref().map(|e| e.id()), Some("ERR-02"));
+    // Só o ERR-53 vai ao registro.
+    let codigos: Vec<_> = registro.entradas().iter().map(|e| e.codigo).collect();
+    assert_eq!(codigos, [CodigoErro::IntegracaoFalhaInesperada]);
+}
+
+// AC-128 na API: Obsidian aberto, `listar` e `testar` trazem o número de notas da
+// Obsidian CLI real (T2) contra o servidor MCP falso.
+#[tokio::test]
+async fn listar_e_testar_trazem_as_notas_indexadas_da_obsidian_cli() {
+    use crate::infra::mcp::servidor_falso::ServidorFalso;
+    use crate::infra::obsidian::FERRAMENTA_CONTAGEM;
+
+    let servidor = ServidorFalso::iniciar().await;
+    servidor.config(|c| c.ferramentas.push(FERRAMENTA_CONTAGEM.into()));
+    servidor.responder(|ferramenta, _| match ferramenta {
+        FERRAMENTA_CONTAGEM => ("75\n".into(), false),
+        _ => ("No matches found.".into(), false),
+    });
+    let obsidian: Arc<dyn Integracao> = Arc::new(ObsidianCli::new(ConfigObsidian::nova(
+        servidor.url(),
+        "myHarness-vault",
+    )));
+    let (servico, _, avisos) = montar(vec![obsidian]);
+
+    let estado = servico.testar(TipoIntegracao::ObsidianCli).await.unwrap();
+    assert_eq!(estado.status, StatusIntegracao::Conectado);
+    assert_eq!(estado.notas_indexadas, Some(75));
+    let listada = servico
+        .listar()
+        .await
+        .into_iter()
+        .find(|e| e.tipo == TipoIntegracao::ObsidianCli)
+        .unwrap();
+    assert_eq!(listada.notas_indexadas, Some(75));
+    assert_eq!(
+        avisos.lock().unwrap().last().unwrap().notas_indexadas,
+        Some(75)
+    );
+    let dto = crate::commands::dto::Integracao::from(listada);
+    assert_eq!(dto.notas_indexadas, Some(75));
 }
 
 // Critério 6: o token do GitHub entra na máscara do núcleo (o guardado na abertura e o
