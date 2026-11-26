@@ -41,8 +41,8 @@ use super::secrets::{ChaveCredencial, CofreCredenciais, ErroCofre};
 /// Variável de ambiente com o `client_id` do app OAuth (`.env.example`).
 pub const VARIAVEL_CLIENT_ID: &str = "MYHARNESS_GITHUB_CLIENT_ID";
 
-/// Escopos pedidos no device flow: `repo`, para o núcleo fazer push e abrir PR (RF-27)
-/// [a confirmar].
+/// Escopos pedidos no device flow: `repo`, para o núcleo fazer push e abrir PR (RF-27;
+/// decisão `geral-decisao-2026-11-24-escopo-repo-no-github`).
 pub const ESCOPOS_PADRAO: [&str; 1] = ["repo"];
 
 /// Espera mínima entre consultas, mesmo que o GitHub mande menos.
