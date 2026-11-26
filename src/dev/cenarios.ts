@@ -43,20 +43,25 @@ const NOME: Record<TipoIntegracao, string> = {
 
 const TIPOS = Object.keys(PREFIXO) as TipoIntegracao[];
 
-/** `sem login`, `não instalado`, ERR-53 e ERR-55 valem para as três integrações. */
+/**
+ * ERR-53 e ERR-55 valem para as três integrações. `sem login` e `não instalado` só para o
+ * Claude CLI: o núcleo só manda esses estados para ele.
+ */
 function cenariosDeCadaIntegracao(): Record<string, Cenario> {
   const cenarios: Record<string, Cenario> = {};
   for (const tipo of TIPOS) {
     const p = PREFIXO[tipo];
     const nome = NOME[tipo];
-    cenarios[`${p}-sem-login`] = {
-      descricao: `${nome} sem login`,
-      estado: { [tipo]: { status: "sem_login", conta: null, versao: null } },
-    };
-    cenarios[`${p}-nao-instalado`] = {
-      descricao: `${nome} não instalado, sem erro no estado`,
-      estado: { [tipo]: { status: "nao_instalado", conta: null, versao: null } },
-    };
+    if (tipo === "claude_cli") {
+      cenarios[`${p}-sem-login`] = {
+        descricao: `${nome} sem login`,
+        estado: { [tipo]: { status: "sem_login", conta: null, versao: null } },
+      };
+      cenarios[`${p}-nao-instalado`] = {
+        descricao: `${nome} não instalado, sem erro no estado`,
+        estado: { [tipo]: { status: "nao_instalado", conta: null, versao: null } },
+      };
+    }
     cenarios[`${p}-err-53`] = {
       descricao: `${nome} desconectado com o ERR-53 (falha inesperada)`,
       estado: {
