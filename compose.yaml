@@ -28,18 +28,17 @@ x-base: &base
   env_file:
     - path: .env
       required: false
-  # O Obsidian roda no Windows: o container fala com ele por um servidor MCP no Windows (HTTP),
-  # alcançado pelo nome host.docker.internal.
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
+  # O Obsidian roda no Windows: o backend fala com o servidor MCP dele em 127.0.0.1:27180.
+  # Com o WSL em `networkingMode=mirrored`, o contêiner na rede do WSL alcança esse
+  # endereço (decisão geral-decisao-2026-11-24-wsl-em-mirrored). Na rede do host, as
+  # portas do Vite (1420, 1421) já aparecem no WSL sem `ports:`.
+  network_mode: host
 
 services:
   dev:
     <<: *base
+    # Vite em 1420 (tela no navegador, com o núcleo simulado) e HMR em 1421.
     command: ["sleep", "infinity"]
-    ports:
-      - "1420:1420" # servidor do Vite (tela no navegador, com o núcleo simulado)
-      - "1421:1421" # HMR do Vite
 
   check:
     <<: *base
@@ -67,9 +66,6 @@ services:
       - claude-home:/home/dev/.claude
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /mnt/wslg:/mnt/wslg
-    ports:
-      - "1420:1420"
-      - "1421:1421"
 
 volumes:
   cargo-registry:

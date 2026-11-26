@@ -145,9 +145,14 @@ async fn servidor_fora_do_ar_da_err_53_e_conectar_de_novo_funciona() {
         "{texto}"
     );
     assert!(texto.ends_with(". Tente de novo."), "{texto}");
-    // Pelo trait, ERR-53 deixa a integração em desconectado.
-    let estado = obsidian.conectar(&SemInstrucao).await.unwrap();
-    assert_eq!(estado.status, StatusIntegracao::Desconectado);
+    // Pelo trait, o mesmo ERR-53, com o motivo; o estado final é desconectado.
+    let pelo_trait = obsidian.conectar(&SemInstrucao).await.unwrap_err();
+    assert_eq!(pelo_trait.id(), "ERR-53");
+    assert_eq!(pelo_trait.to_string(), texto);
+    assert_eq!(
+        pelo_trait.status_resultante(),
+        Some(StatusIntegracao::Desconectado)
+    );
 
     let servidor = ServidorFalso::iniciar_na_porta(porta).await;
     com_contagem(&servidor, "7");

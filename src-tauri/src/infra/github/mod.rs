@@ -107,8 +107,7 @@ impl StatusGitHub {
     }
 }
 
-/// Erro de checar, conectar ou desconectar o GitHub: o ERR-02 do catálogo (no
-/// [`ErroIntegracao`] do núcleo) ou o ERR-53, que ainda não está no `ErroIntegracao`.
+/// Erro de checar, conectar ou desconectar o GitHub: o ERR-02 ou o ERR-53 do catálogo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErroGitHub {
     /// ERR-02 (`ErroIntegracao::GithubOauthNaoConcluido`): cancelado, recusado ou expirado.
@@ -317,13 +316,17 @@ impl GitHub {
         }
     }
 
-    /// Lê a conta do token novo e o guarda no cofre de credenciais.
+    /// Lê a conta do token novo e o guarda no cofre de credenciais. "Desconectar"
+    /// durante a leitura da conta cancela: o token não é gravado (ERR-02 cancelado).
     async fn guardar(&self, token: Segredo) -> Result<StatusGitHub, ErroGitHub> {
         let usuario = self
             .host
             .usuario(&token)
             .await
             .map_err(|e| ErroGitHub::do_host(&e, &[&token]))?;
+        if self.cancelado.load(Ordering::SeqCst) {
+            return Err(ErroGitHub::oauth(MotivoOauthNaoConcluido::Cancelado));
+        }
         self.cofre
             .gravar(&self.config.chave, &token)
             .map_err(|e| ErroGitHub::do_cofre(&e, &[&token]))?;
@@ -390,18 +393,23 @@ impl GitHub {
     }
 }
 
-/// Converte para o contrato do trait: ERR-02 sai como erro; ERR-53, que o
-/// `ErroIntegracao` do núcleo ainda não tem, sai como o estado final dele
-/// (`desconectado`), sem o motivo. Quem precisa do motivo e dos escopos usa
-/// [`GitHub::checar`], [`GitHub::conectar_com`] ou [`GitHub::remover`].
+impl From<ErroGitHub> for ErroIntegracao {
+    fn from(erro: ErroGitHub) -> Self {
+        match erro {
+            ErroGitHub::Catalogo(erro) => erro,
+            ErroGitHub::FalhaInesperada { motivo } => {
+                ErroIntegracao::inesperada(TipoIntegracao::GitHub, motivo)
+            }
+        }
+    }
+}
+
+/// Converte para o contrato do trait: ERR-02 e ERR-53 saem como erro, com o motivo.
+/// Os escopos ficam em [`GitHub::checar`] e [`GitHub::conectar_com`].
 fn para_o_trait(
     resultado: Result<StatusGitHub, ErroGitHub>,
 ) -> Result<EstadoIntegracao, ErroIntegracao> {
-    match resultado {
-        Ok(status) => Ok(status.estado),
-        Err(ErroGitHub::Catalogo(erro)) => Err(erro),
-        Err(erro @ ErroGitHub::FalhaInesperada { .. }) => Ok(erro.estado_final()),
-    }
+    resultado.map(|status| status.estado).map_err(Into::into)
 }
 
 #[async_trait]
@@ -423,5 +431,11 @@ impl Integracao for GitHub {
 
     async fn desconectar(&self) -> Result<EstadoIntegracao, ErroIntegracao> {
         para_o_trait(self.remover())
+    }
+
+    /// O token guardado, para a máscara do núcleo (RN-04). Sem token ou com o cofre de
+    /// credenciais em erro, nenhum.
+    fn segredos_guardados(&self) -> Vec<Segredo> {
+        self.token().ok().flatten().into_iter().collect()
     }
 }

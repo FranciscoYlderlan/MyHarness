@@ -7,6 +7,7 @@
 use async_trait::async_trait;
 
 use crate::domain::integracao::{ErroIntegracao, EstadoIntegracao, TipoIntegracao};
+use crate::domain::segredo::Segredo;
 
 /// Instrução que a integração precisa mostrar ao Humano durante a conexão (UC-01 passo 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,14 +41,14 @@ pub trait Integracao: Send + Sync {
 
     /// Checa o status sem pedir nada ao Humano (UC-01 passo 1; "testar conexão" do CMP-11).
     /// Conectada, devolve o estado com conta e versão, quando houver (UC-01 FA-01).
-    /// Erros: ERR-01 (Claude CLI não instalado), ERR-03 (Obsidian fechado).
+    /// Erros: ERR-01 (Claude CLI não instalado), ERR-03 (Obsidian fechado), ERR-53.
     async fn verificar(&self) -> Result<EstadoIntegracao, ErroIntegracao>;
 
     /// Conecta a integração (UC-01 passos 2 e 3): `/login` do Claude CLI, device flow do
     /// GitHub ou teste do servidor MCP da Obsidian CLI (D10). O que o Humano precisa ver
     /// (ex.: o código do device flow) vai pelo `observador`.
     /// Já conectada, devolve o estado atual sem novo login (UC-01 FA-01).
-    /// Erros: ERR-01, ERR-02, ERR-03, ERR-04.
+    /// Erros: ERR-01, ERR-02, ERR-03, ERR-04, ERR-53.
     async fn conectar(
         &self,
         observador: &dyn ObservadorConexao,
@@ -55,7 +56,16 @@ pub trait Integracao: Send + Sync {
 
     /// Desconecta a integração (CMP-11) e devolve o estado novo.
     /// Quem chama garante que nenhuma execução depende dela (invariante de ENT-13).
+    /// Erros: ERR-53.
     async fn desconectar(&self) -> Result<EstadoIntegracao, ErroIntegracao>;
+
+    /// Segredos que a integração guarda (ex.: token do GitHub), para o núcleo os
+    /// registrar na máscara dele (RN-04: "o valor exato de todo segredo que o próprio
+    /// núcleo guarda"). Nunca passe o valor a log, SQLite, cofre ou tela.
+    /// Padrão: nenhum.
+    fn segredos_guardados(&self) -> Vec<Segredo> {
+        Vec::new()
+    }
 }
 
 /// Status de uma integração já traduzido para a tela: o estado e, se houve, o erro

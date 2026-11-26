@@ -92,8 +92,7 @@ pub struct StatusObsidian {
     pub notas_indexadas: Option<u64>,
 }
 
-/// Erro de checar ou conectar a Obsidian CLI: o ERR-03 do catálogo (no
-/// [`ErroIntegracao`] do núcleo) ou o ERR-53, que ainda não está no `ErroIntegracao`.
+/// Erro de checar ou conectar a Obsidian CLI: o ERR-03 ou o ERR-53 do catálogo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErroObsidian {
     /// ERR-03 (`ErroIntegracao::ObsidianFechado`), com a mensagem da CLI mascarada.
@@ -306,18 +305,22 @@ impl ObsidianCli {
     }
 }
 
-/// Converte para o contrato do trait: ERR-03 sai como erro; ERR-53, que o
-/// `ErroIntegracao` do núcleo ainda não tem, sai como o estado final dele
-/// (`desconectado`), sem o motivo. Quem precisa do motivo usa [`ObsidianCli::checar`]
-/// ou [`ObsidianCli::testar`].
+impl From<ErroObsidian> for ErroIntegracao {
+    fn from(erro: ErroObsidian) -> Self {
+        match erro {
+            ErroObsidian::Catalogo(erro) => erro,
+            ErroObsidian::FalhaInesperada { motivo } => {
+                ErroIntegracao::inesperada(TipoIntegracao::ObsidianCli, motivo)
+            }
+        }
+    }
+}
+
+/// Converte para o contrato do trait: ERR-03 e ERR-53 saem como erro, com o motivo.
 fn para_o_trait(
     resultado: Result<StatusObsidian, ErroObsidian>,
 ) -> Result<EstadoIntegracao, ErroIntegracao> {
-    match resultado {
-        Ok(status) => Ok(status.estado),
-        Err(ErroObsidian::Catalogo(erro)) => Err(erro),
-        Err(erro @ ErroObsidian::FalhaInesperada { .. }) => Ok(erro.estado_final()),
-    }
+    resultado.map(|status| status.estado).map_err(Into::into)
 }
 
 #[async_trait]
