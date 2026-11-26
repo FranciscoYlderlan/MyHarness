@@ -1,14 +1,19 @@
 // Liga a tela das integrações ao núcleo, só pelo contrato IPC (`@/lib/ipc`): lista as três
 // ao abrir, ouve `integracao-mudou` e roda conectar e desconectar com o canal de
-// instruções. Toda falha vira um item do catálogo no cartão da integração.
+// instruções. Toda resposta de comando passa pelo zod; toda falha vira um item do catálogo
+// no cartão da integração.
 import { useCallback, useEffect, useMemo, useReducer, useRef, type ReactNode } from "react";
-import { canalDeConexao, commands, ouvir } from "@/lib/ipc";
+import { z } from "zod";
+import { canalDeConexao, commands, ouvir, validarResposta } from "@/lib/ipc";
 import type { Integracao, TipoIntegracao } from "@/lib/ipc";
+import { integracao as esquemaIntegracao } from "@/lib/ipc/esquemas";
 import { ContextoDasIntegracoes, type Integracoes } from "./contexto";
 import { estadoInicial, reduzir, type Operacao } from "./estado";
 import { erroDoComando, ORDEM_DAS_INTEGRACOES } from "./mensagens";
 
 type Resultado = { status: "ok"; data: Integracao } | { status: "error"; error: unknown };
+
+const listaDeIntegracoes = z.array(esquemaIntegracao);
 
 export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
   const [estado, despachar] = useReducer(reduzir, undefined, estadoInicial);
@@ -41,7 +46,7 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
       despachar({ tipo: "iniciou", integracao: tipo, operacao });
       let resultado: Resultado;
       try {
-        resultado = await chamada();
+        resultado = validarResposta(`resposta de ${operacao}`, esquemaIntegracao, await chamada());
       } catch (e) {
         resultado = { status: "error", error: e };
       } finally {
@@ -126,7 +131,11 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
     const vezNoPedido = { ...vez.current };
     void (async () => {
       try {
-        const lista = await commands.listarIntegracoes();
+        const lista = validarResposta(
+          "resposta de listar",
+          listaDeIntegracoes,
+          await commands.listarIntegracoes(),
+        );
         if (!montado.current) return;
         if (lista.status === "ok") {
           for (const integracao of lista.data) {

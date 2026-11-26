@@ -1,11 +1,12 @@
 // Porta única da tela para o núcleo: os comandos e eventos tipados de `src/bindings/`
-// (gerados do Rust), com validação zod de tudo o que chega por evento ou canal.
+// (gerados do Rust), com validação zod de tudo o que chega por evento, canal ou resposta
+// de comando.
 import { Channel } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { z } from "zod";
 import { commands, events } from "@/bindings";
-import type { EventoExecucao, InstrucaoConexao } from "@/bindings";
-import { esquemasDeEvento, eventoExecucao, instrucaoConexao } from "./esquemas";
+import type { ErroIpc, EventoExecucao, InstrucaoConexao } from "@/bindings";
+import { erroCatalogo, esquemasDeEvento, eventoExecucao, instrucaoConexao } from "./esquemas";
 
 export { commands };
 export type * from "@/bindings";
@@ -72,4 +73,40 @@ export function canalDeConexao(
   aoInvalido: AoInvalido = relatarInvalido,
 ): Channel<InstrucaoConexao> {
   return canalValidado("canal de conexão", instrucaoConexao, aoReceber, aoInvalido);
+}
+
+/** Resposta de um comando, como os bindings devolvem. */
+export type RespostaDeComando<T> = { status: "ok"; data: T } | { status: "error"; error: ErroIpc };
+
+/** ERR-55 da resposta de comando fora do contrato. */
+const RESPOSTA_FORA_DO_CONTRATO: ErroIpc = {
+  tipo: "catalogo",
+  erro: {
+    codigo: "FALHA_INTERNA",
+    id: "ERR-55",
+    parametros: { motivo: "a resposta do núcleo está fora do contrato" },
+  },
+};
+
+/**
+ * Valida pelo zod a resposta de um comando: o dado com `esquema` e o erro com o catálogo.
+ * Resposta fora do contrato não chega à tela: vai para `aoInvalido` e vira o ERR-55.
+ */
+export function validarResposta<T>(
+  origem: string,
+  esquema: z.ZodType<T>,
+  resposta: { status: "ok"; data: unknown } | { status: "error"; error: unknown },
+  aoInvalido: AoInvalido = relatarInvalido,
+): RespostaDeComando<T> {
+  if (resposta.status === "ok") {
+    const r = esquema.safeParse(resposta.data);
+    if (r.success) return { status: "ok", data: r.data };
+    aoInvalido(origem, r.error, resposta.data);
+    return { status: "error", error: RESPOSTA_FORA_DO_CONTRATO };
+  }
+  const bruto = resposta.error as { tipo?: unknown; erro?: unknown } | null;
+  const r = erroCatalogo.safeParse(bruto?.tipo === "catalogo" ? bruto.erro : undefined);
+  if (r.success) return { status: "error", error: { tipo: "catalogo", erro: r.data } };
+  aoInvalido(origem, r.error, resposta.error);
+  return { status: "error", error: RESPOSTA_FORA_DO_CONTRATO };
 }

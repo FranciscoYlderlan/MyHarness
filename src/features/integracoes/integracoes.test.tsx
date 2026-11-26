@@ -575,3 +575,29 @@ describe("guarda de operação em andamento", () => {
     expect(testesDoGithub).toBe(antes + 1);
   });
 });
+
+describe("respostas de comando pelo zod", () => {
+  it("resposta fora do contrato (notas negativas) é recusada e vira o ERR-55", async () => {
+    const erroNoConsole = vi.spyOn(console, "error").mockImplementation(() => {});
+    const nucleo = criarNucleoSimuladoDeIntegracoes({
+      ...todasConectadas,
+      obsidian_cli: { status: "conectado", notas_indexadas: -5 },
+    });
+    mockCommands(nucleo.handlers);
+    render(<MainWindow />);
+    await waitFor(() => expect(indicador()).toHaveAttribute("data-situacao", "erro"));
+    act(() => indicador().click());
+    const c = await screen.findByRole("article", { name: "Obsidian CLI" });
+    await waitFor(() =>
+      expect(within(c).getByRole("alert")).toHaveTextContent(
+        "Algo deu errado no MyHarness: a resposta do núcleo está fora do contrato. Tente de novo.",
+      ),
+    );
+    expect(within(c).queryByText("-5")).not.toBeInTheDocument();
+    expect(within(c).queryByText("Notas indexadas")).not.toBeInTheDocument();
+    // As outras, dentro do contrato, seguem conectadas.
+    expect(cartao("GitHub")).toHaveAttribute("data-situacao", "conectado");
+    expect(erroNoConsole).toHaveBeenCalled();
+    erroNoConsole.mockRestore();
+  });
+});
