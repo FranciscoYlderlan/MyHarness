@@ -46,6 +46,8 @@ export function reduzir(estado: EstadoDasIntegracoes, acao: Acao): EstadoDasInte
       };
     }
     case "recebeu": {
+      // O estado do núcleo traz o erro que o explica (M-46), inclusive o de `listar`: o
+      // cartão mostra o motivo como se a checagem tivesse acabado de falhar.
       const tipo = acao.integracao.tipo;
       return {
         ...estado,
@@ -53,7 +55,7 @@ export function reduzir(estado: EstadoDasIntegracoes, acao: Acao): EstadoDasInte
           ...estado[tipo],
           integracao: acao.integracao,
           emAndamento: null,
-          erro: null,
+          erro: acao.integracao.erro ? { erro: acao.integracao.erro, operacao: "checar" } : null,
           instrucoes: [],
         },
       };
@@ -73,13 +75,15 @@ export function reduzir(estado: EstadoDasIntegracoes, acao: Acao): EstadoDasInte
     case "falhou": {
       const atual = estado[acao.integracao];
       const status = statusDepoisDoErro(acao.erro);
-      const base = atual.integracao ?? {
+      const base: Integracao = atual.integracao ?? {
         tipo: acao.integracao,
-        status: "desconectado" as const,
+        status: "desconectado",
         conta: null,
         versao: null,
+        notas_indexadas: null,
+        erro: null,
       };
-      const integracao =
+      const integracao: Integracao | null =
         status === null
           ? atual.integracao
           : {
@@ -87,6 +91,8 @@ export function reduzir(estado: EstadoDasIntegracoes, acao: Acao): EstadoDasInte
               status,
               conta: null,
               versao: status === "nao_instalado" ? null : base.versao,
+              notas_indexadas: null,
+              erro: acao.erro,
             };
       return {
         ...estado,

@@ -87,6 +87,12 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
               <dd>{e.integracao.versao}</dd>
             </>
           )}
+          {e.integracao?.notas_indexadas != null && (
+            <>
+              <dt className="text-muted-foreground">Notas indexadas</dt>
+              <dd>{e.integracao.notas_indexadas}</dd>
+            </>
+          )}
         </dl>
       )}
 

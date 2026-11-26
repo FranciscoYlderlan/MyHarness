@@ -88,6 +88,10 @@ export const integracao = z.object({
   status: statusIntegracao,
   conta: z.string().nullable(),
   versao: z.string().nullable(),
+  /** Notas `.md` do cofre checado; só Obsidian CLI conectada (AC-128, M-46). */
+  notas_indexadas: z.number().int().min(0).nullable(),
+  /** O ERR do catálogo que explica o status, quando ele vem de uma falha (M-46). */
+  erro: erroCatalogo.nullable(),
 }) satisfies z.ZodType<B.Integracao>;
 
 export const instrucaoConexao = z.discriminatedUnion("tipo", [

@@ -94,14 +94,9 @@ impl ErroClaudeCli {
     }
 
     /// Estado final do catálogo: `não instalado` (ERR-01), `sem login` (ERR-04),
-    /// `desconectado` (ERR-53).
+    /// `desconectado` (ERR-53), com o erro no estado (M-46).
     pub fn estado(&self) -> EstadoIntegracao {
-        match self {
-            ErroClaudeCli::Catalogo(erro) => EstadoIntegracao::a_partir_do_erro(erro),
-            ErroClaudeCli::FalhaInesperada { .. } => {
-                EstadoIntegracao::novo(TipoIntegracao::ClaudeCli, StatusIntegracao::Desconectado)
-            }
-        }
+        EstadoIntegracao::a_partir_do_erro(&self.clone().into())
     }
 
     fn inesperada(motivo: impl AsRef<str>) -> Self {
@@ -205,6 +200,7 @@ impl ClaudeCli {
                 .filter(|_| autenticacao.logado)
                 .map(|email| TextoMascarado::new(&email).as_str().to_owned()),
             versao: Some(versao),
+            ..EstadoIntegracao::novo(TipoIntegracao::ClaudeCli, StatusIntegracao::SemLogin)
         })
     }
 

@@ -449,6 +449,13 @@ export type Integracao = {
   status: StatusIntegracao;
   conta: string | null;
   versao: string | null;
+  /**  Notas `.md` do cofre checado; só Obsidian CLI `conectado` (AC-128, M-46). */
+  notas_indexadas: number | null;
+  /**
+   *  O ERR do catálogo que explica o status, quando ele vem de uma falha (M-46), com
+   *  os valores já mascarados (RN-04).
+   */
+  erro: ErroCatalogo | null;
 };
 
 /**  Uma integração mudou de status (CMP-03, CMP-11). */
