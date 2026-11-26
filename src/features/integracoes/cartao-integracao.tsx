@@ -38,18 +38,18 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
   const repetivel = erro !== null && podeRepetir(erro);
   const repetirEhConectar = repetivel && e.erro?.operacao === "conectar";
 
+  // Durante a operação os botões ficam no lugar, inativos, e a conta segue na tela: o cartão
+  // não muda de altura, e o segundo clique de um duplo clique cai no mesmo botão inativo.
   const acoes: { rotulo: string; aoClicar: () => void }[] = [];
-  if (!ocupado) {
-    if (status === "conectado") {
-      acoes.push({ rotulo: "Testar", aoClicar: () => checar(tipo) });
-      acoes.push({ rotulo: "Desconectar", aoClicar: () => desconectar(tipo) });
-    } else if (naoInstalado) {
-      acoes.push({ rotulo: "Testar", aoClicar: () => checar(tipo) });
-    } else if (!repetirEhConectar) {
-      acoes.push({ rotulo: "Conectar", aoClicar: () => conectar(tipo) });
-    }
-    if (repetivel) acoes.push({ rotulo: "Repetir", aoClicar: () => repetir(tipo) });
+  if (status === "conectado") {
+    acoes.push({ rotulo: "Testar", aoClicar: () => checar(tipo) });
+    acoes.push({ rotulo: "Desconectar", aoClicar: () => desconectar(tipo) });
+  } else if (naoInstalado) {
+    acoes.push({ rotulo: "Testar", aoClicar: () => checar(tipo) });
+  } else if (!repetirEhConectar) {
+    acoes.push({ rotulo: "Conectar", aoClicar: () => conectar(tipo) });
   }
+  if (repetivel) acoes.push({ rotulo: "Repetir", aoClicar: () => repetir(tipo) });
 
   const tituloId = `integracao-${tipo}-titulo`;
 
@@ -73,7 +73,7 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
         </span>
       </header>
 
-      {!ocupado && status === "conectado" && erro === null && (
+      {status === "conectado" && erro === null && (
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 text-sm">
           {e.integracao?.conta && (
             <>
@@ -157,6 +157,7 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
               key={a.rotulo}
               size="sm"
               variant={a.rotulo === "Conectar" ? "default" : "outline"}
+              disabled={ocupado}
               onClick={a.aoClicar}
             >
               {a.rotulo}
