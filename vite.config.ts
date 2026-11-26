@@ -2,13 +2,31 @@
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+/**
+ * Modo simulado (`pnpm dev:simulado` = `vite --mode simulado`): põe o núcleo simulado
+ * antes do `src/main.tsx`. Só no servidor de desenvolvimento; o build nunca o inclui.
+ */
+function modoSimulado(): Plugin {
+  return {
+    name: "myharness-modo-simulado",
+    apply: (_config, { command, mode }) => command === "serve" && mode === "simulado",
+    transformIndexHtml: () => [
+      {
+        tag: "script",
+        attrs: { type: "module", src: "/src/dev/modo-simulado.ts" },
+        injectTo: "head",
+      },
+    ],
+  };
+}
+
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), modoSimulado()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
