@@ -15,6 +15,17 @@ type Resultado = { status: "ok"; data: Integracao } | { status: "error"; error: 
 
 const listaDeIntegracoes = z.array(esquemaIntegracao);
 
+/**
+ * Tempo mínimo de carregando contra duplo clique: depois de um clique num botão do cartão,
+ * o carregando fica pelo menos este tempo, mesmo com o núcleo instantâneo. Assim o segundo
+ * clique de um duplo clique cai no botão inativo, e não num botão novo que nasce sob o
+ * ponteiro (bug B1 do adversarial da TEL-02). 500 ms é o tempo de duplo clique padrão do
+ * Windows: o segundo clique de um duplo clique chega antes disso.
+ */
+export const CARREGANDO_MINIMO_CONTRA_DUPLO_CLIQUE_MS = 500;
+
+const esperar = (ms: number) => new Promise<void>((resolver) => setTimeout(resolver, ms));
+
 export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
   const [estado, despachar] = useReducer(reduzir, undefined, estadoInicial);
   const estadoRef = useRef(estado);
@@ -43,15 +54,18 @@ export function ProvedorDeIntegracoes({ children }: { children: ReactNode }) {
       if (andamento.current[tipo] !== null) return;
       andamento.current[tipo] = operacao;
       const minha = ++vez.current[tipo];
+      const inicio = Date.now();
       despachar({ tipo: "iniciou", integracao: tipo, operacao });
       let resultado: Resultado;
       try {
         resultado = validarResposta(`resposta de ${operacao}`, esquemaIntegracao, await chamada());
       } catch (e) {
         resultado = { status: "error", error: e };
-      } finally {
-        andamento.current[tipo] = null;
       }
+      // A guarda fica ligada até o fim do tempo mínimo: o segundo clique não chama nada.
+      const restante = CARREGANDO_MINIMO_CONTRA_DUPLO_CLIQUE_MS - (Date.now() - inicio);
+      if (restante > 0) await esperar(restante);
+      andamento.current[tipo] = null;
       if (!montado.current || vez.current[tipo] !== minha) return;
       if (resultado.status === "ok") despachar({ tipo: "recebeu", integracao: resultado.data });
       else
