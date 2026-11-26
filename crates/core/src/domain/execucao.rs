@@ -481,6 +481,7 @@ mod tests {
         assert!(format!("{sem_mcp:?}").contains("mcp_config: None"));
     }
 
+    #[cfg(not(windows))]
     fn path_filtrado(valor: &str) -> Vec<(OsString, OsString)> {
         ambiente_sem_token_do_github(amb(&[("HOME", "/home/u"), ("PATH", valor), ("Z", "1")]))
     }
