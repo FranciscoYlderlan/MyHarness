@@ -507,4 +507,71 @@ describe("guarda de operação em andamento", () => {
     await waitFor(() => expect(c).toHaveAttribute("data-situacao", "conectado"));
     expect(c).toHaveTextContent("FranciscoYlderlan");
   });
+
+  it("dois cliques em Conectar dão uma chamada só", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes({
+      ...todasConectadas,
+      github: { status: "desconectado" },
+    });
+    let conexoes = 0;
+    mockCommands({
+      ...nucleo.handlers,
+      conectarIntegracao: (args) => {
+        conexoes += 1;
+        return nucleo.handlers.conectarIntegracao!(args);
+      },
+    });
+    render(<MainWindow />);
+    await abrirPainel();
+    const c = cartao("GitHub");
+    nucleo.roteiroDeConexao("github", { instrucoes: [codigoDoDispositivo], aguardarHumano: true });
+    const conectar = within(c).getByRole("button", { name: "Conectar" });
+    act(() => {
+      conectar.click();
+      conectar.click();
+    });
+    await waitFor(() => expect(within(c).getByText("WDJB-MJHT")).toBeInTheDocument());
+    expect(conexoes).toBe(1);
+
+    act(() => nucleo.concluirConexao("github", { conta: "FranciscoYlderlan" }));
+    await waitFor(() => expect(c).toHaveAttribute("data-situacao", "conectado"));
+    expect(conexoes).toBe(1);
+  });
+
+  it("repetir durante operação em andamento não dispara outra chamada", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes(todasConectadas);
+    let testesDoGithub = 0;
+    let segurar = false;
+    let liberar: (() => void) | null = null;
+    mockCommands({
+      ...nucleo.handlers,
+      testarIntegracao: (args) => {
+        if (args.tipo !== "github") return nucleo.handlers.testarIntegracao!(args);
+        testesDoGithub += 1;
+        if (!segurar) return nucleo.handlers.testarIntegracao!(args);
+        return new Promise((resolver) => {
+          liberar = () => resolver(nucleo.handlers.testarIntegracao!(args));
+        });
+      },
+    });
+    nucleo.falharChecagem("github", falhaInesperada("github", "erro de rede"));
+    render(<MainWindow />);
+    await abrirPainel();
+    const c = cartao("GitHub");
+    const repetir = await within(c).findByRole("button", { name: "Repetir" });
+    const antes = testesDoGithub;
+
+    nucleo.definir("github", { status: "conectado", conta: "FranciscoYlderlan", erro: null });
+    segurar = true;
+    act(() => {
+      repetir.click();
+      repetir.click();
+    });
+    await waitFor(() => expect(c).toHaveAttribute("data-situacao", "carregando"));
+    expect(testesDoGithub).toBe(antes + 1);
+
+    act(() => liberar!());
+    await waitFor(() => expect(c).toHaveAttribute("data-situacao", "conectado"));
+    expect(testesDoGithub).toBe(antes + 1);
+  });
 });
