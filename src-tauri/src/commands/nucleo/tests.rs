@@ -1,8 +1,10 @@
 //! O núcleo pelos comandos IPC: integrações reais (GitHub sobre o falso), RN-08 e ERR-55.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use my_harness_core::application::integracao::Integracao as IntegracaoCore;
+use my_harness_core::domain::integracao::{EstadoIntegracao, StatusIntegracao as StatusCore};
 use my_harness_core::domain::segredo::Segredo;
 use tauri::ipc::InvokeResponseBody;
 
@@ -10,6 +12,7 @@ use super::*;
 use crate::commands::erro::ErroCatalogo;
 use crate::commands::integracoes::{IntegracaoSemConfiguracao, MascaraNucleo, RegistroEmMemoria};
 use crate::infra::github::falso::{CODIGO_DO_USUARIO, ENDERECO, GitHubFalso};
+use crate::infra::github::host::RespostaToken;
 use crate::infra::github::{ConfigGitHub, GitHub};
 use crate::infra::secrets::CofreEmMemoria;
 
@@ -39,6 +42,85 @@ fn nucleo() -> (NucleoMyHarness, Arc<GitHubFalso>, Arc<RegistroEmMemoria>) {
         falso,
         registro,
     )
+}
+
+/// Núcleo com o Claude CLI dado, os avisos de estado e o registro de operações guardados.
+struct Montado {
+    nucleo: Arc<dyn Nucleo>,
+    falso: Arc<GitHubFalso>,
+    avisos: Arc<Mutex<Vec<EstadoIntegracao>>>,
+    operacoes: Arc<Mutex<Vec<String>>>,
+}
+
+impl Montado {
+    fn novo(claude: Arc<dyn IntegracaoCore>) -> Self {
+        let falso = Arc::new(GitHubFalso::novo());
+        let github: Arc<dyn IntegracaoCore> = Arc::new(GitHub::new(
+            ConfigGitHub::nova("cid"),
+            falso.clone(),
+            Arc::new(CofreEmMemoria::novo()),
+        ));
+        let obsidian: Arc<dyn IntegracaoCore> = Arc::new(IntegracaoSemConfiguracao::new(
+            TipoCore::ObsidianCli,
+            "sem servidor no teste",
+        ));
+        let registro = Arc::new(RegistroEmMemoria::default());
+        let avisos = Arc::new(Mutex::new(Vec::new()));
+        let gravados = avisos.clone();
+        let servico = ServicoIntegracoes::new(
+            vec![claude, obsidian, github],
+            Arc::new(MascaraNucleo::default()),
+            registro.clone(),
+        )
+        .com_aviso(Arc::new(move |estado: &EstadoIntegracao| {
+            gravados.lock().unwrap().push(estado.clone())
+        }));
+        let operacoes = Arc::new(Mutex::new(Vec::new()));
+        let destino = operacoes.clone();
+        let nucleo = NucleoMyHarness::new(servico, registro).com_registro_de_operacoes(Arc::new(
+            move |texto: &str| destino.lock().unwrap().push(texto.to_owned()),
+        ));
+        Self {
+            nucleo: Arc::new(nucleo),
+            falso,
+            avisos,
+            operacoes,
+        }
+    }
+
+    /// Status dos avisos de `tipo`, em ordem.
+    fn avisos(&self, tipo: TipoCore) -> Vec<StatusCore> {
+        self.avisos
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| e.tipo == tipo)
+            .map(|e| e.status)
+            .collect()
+    }
+
+    fn operacoes_com(&self, trecho: &str) -> usize {
+        self.operacoes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|o| o.contains(trecho))
+            .count()
+    }
+}
+
+/// Espera o canal ter `n` instruções (relógio do tokio).
+async fn esperar_instrucoes(recebidas: &Mutex<Vec<serde_json::Value>>, n: usize) {
+    for _ in 0..500 {
+        if recebidas.lock().unwrap().len() >= n {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "esperava {n} instruções; chegaram {:?}",
+        recebidas.lock().unwrap()
+    );
 }
 
 fn catalogo(erro: ErroIpc) -> ErroCatalogo {
@@ -182,4 +264,109 @@ async fn o_que_nao_existe_e_err_55_e_nada_e_inventado() {
         CodigoErro::ConsumoIndisponivel
     );
     assert!(n.listar_projetos().await.unwrap().is_empty());
+}
+
+// ---------- AC-157 (UC-01 FA-02): conectar repetido reaproveita a conexão ----------
+
+// GitHub: dois `conectar` ao mesmo tempo (o segundo com outro canal, como a tela
+// recarregada) abrem um device flow só, mostram o mesmo código e terminam `conectado`;
+// depois do tempo de vida do código, nenhum fluxo órfão desfaz o `conectado`.
+#[tokio::test(start_paused = true)]
+async fn ac_157_github_conectar_repetido_abre_um_fluxo_so() {
+    let m = Montado::novo(Arc::new(IntegracaoSemConfiguracao::new(
+        TipoCore::ClaudeCli,
+        "sem claude no teste",
+    )));
+    let token = Segredo::new("token-falso-157");
+    m.falso.conta(&token, "octocat", &["repo"]);
+    m.falso.roteiro([
+        RespostaToken::Pendente,
+        RespostaToken::Pendente,
+        RespostaToken::Concedido(token),
+    ]);
+
+    let (canal_a, recebidas_a) = canal();
+    let (canal_b, recebidas_b) = canal();
+    let n = m.nucleo.clone();
+    let primeiro =
+        tokio::spawn(async move { n.conectar_integracao(TipoIntegracao::GitHub, canal_a).await });
+    esperar_instrucoes(&recebidas_a, 1).await;
+    let segundo = m
+        .nucleo
+        .conectar_integracao(TipoIntegracao::GitHub, canal_b)
+        .await
+        .unwrap();
+    let primeiro = primeiro.await.unwrap().unwrap();
+
+    for estado in [&primeiro, &segundo] {
+        assert_eq!(estado.status, StatusIntegracao::Conectado);
+        assert_eq!(estado.conta.as_deref(), Some("octocat"));
+    }
+    assert_eq!(m.falso.pedidos_de_codigo().len(), 1, "um device flow só");
+    let codigo = serde_json::json!({
+        "tipo": "codigo_do_dispositivo",
+        "codigo": CODIGO_DO_USUARIO,
+        "endereco": ENDERECO,
+    });
+    assert_eq!(
+        recebidas_a.lock().unwrap().as_slice(),
+        std::slice::from_ref(&codigo)
+    );
+    assert_eq!(recebidas_b.lock().unwrap().as_slice(), [codigo]);
+    assert_eq!(m.operacoes_com("conectar GitHub repetido: reaproveita"), 1);
+
+    // O código venceria em 15 min: nada expira e o GitHub segue conectado.
+    tokio::time::sleep(Duration::from_secs(1000)).await;
+    assert_eq!(m.avisos(TipoCore::GitHub), [StatusCore::Conectado]);
+    assert_eq!(
+        m.nucleo
+            .testar_integracao(TipoIntegracao::GitHub)
+            .await
+            .unwrap()
+            .status,
+        StatusIntegracao::Conectado
+    );
+}
+
+// B2 no GitHub: "Desconectar" durante o device flow cancela; o `conectar` devolve o
+// ERR-02 cancelado, cujo estado final (`desconectado`) é o que o núcleo guarda.
+#[tokio::test(start_paused = true)]
+async fn desconectar_durante_o_device_flow_cancela_e_devolve_o_estado_guardado() {
+    let m = Montado::novo(Arc::new(IntegracaoSemConfiguracao::new(
+        TipoCore::ClaudeCli,
+        "sem claude no teste",
+    )));
+    let (canal_a, recebidas) = canal();
+    let n = m.nucleo.clone();
+    let conexao =
+        tokio::spawn(async move { n.conectar_integracao(TipoIntegracao::GitHub, canal_a).await });
+    esperar_instrucoes(&recebidas, 1).await;
+
+    let desconectado = m
+        .nucleo
+        .desconectar_integracao(TipoIntegracao::GitHub)
+        .await
+        .unwrap();
+    assert_eq!(desconectado.status, StatusIntegracao::Desconectado);
+    let erro = catalogo(conexao.await.unwrap().unwrap_err());
+    assert_eq!(erro.codigo, CodigoErro::GithubOauthNaoConcluido);
+    assert_eq!(erro.parametros["motivo"], "cancelado");
+    assert_eq!(m.operacoes_com("desconectar GitHub durante a conexão"), 1);
+
+    assert_eq!(m.avisos(TipoCore::GitHub), [StatusCore::Desconectado]);
+    assert_eq!(
+        m.nucleo
+            .testar_integracao(TipoIntegracao::GitHub)
+            .await
+            .unwrap()
+            .status,
+        StatusIntegracao::Desconectado
+    );
+    // Um "Conectar" novo abre outro device flow (a guarda não ficou presa).
+    let (canal_b, recebidas_b) = canal();
+    let n = m.nucleo.clone();
+    let _nova =
+        tokio::spawn(async move { n.conectar_integracao(TipoIntegracao::GitHub, canal_b).await });
+    esperar_instrucoes(&recebidas_b, 1).await;
+    assert_eq!(m.falso.pedidos_de_codigo().len(), 2);
 }
