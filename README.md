@@ -45,6 +45,6 @@ O `pnpm check` também roda no `pre-push` (lefthook) e no CI (`.github/workflows
 - **Plataforma final:** o app roda no Windows. O container serve para desenvolver e testar; o instalador final é gerado no Windows.
 - **Cofre de credenciais:** no app final, o Gerenciador de Credenciais do Windows; no container, o `keyring` usa o Secret Service (gnome-keyring, sessão D-Bus).
 - **Janela pelo WSLg:** depende do WSLg do Windows 11; o volume `/mnt/wslg` precisa existir no WSL.
-- **Banco local:** um arquivo SQLite (`my-harness.sqlite3`, modo WAL) no diretório de dados do app (`app_data_dir` do Tauri: no Linux, `~/.local/share/dev.myharness.app/`; no Windows, `%APPDATA%\dev.myharness.app\`). As migrações de `src-tauri/migrations/` rodam sozinhas ao abrir o app.
-- **Adaptadores ainda vazios:** em `src-tauri/src/infra/`, só `db` funciona; `claude`, `obsidian`, `github`, `git`, `secrets`, `process` e `mcp` são módulos vazios. `tools/fake-claude/` é só um marcador.
+- **Banco local:** um arquivo SQLite (`my-harness.sqlite3`, modo WAL) no diretório de dados do app (`app_data_dir` do Tauri: no Linux, `~/.local/share/dev.myharness.app/`; no Windows, `%APPDATA%\dev.myharness.app\`). As migrações de `crates/app/migrations/` rodam sozinhas ao abrir o app.
+- **Adaptadores:** em `crates/app/src/infra/`, `db` guarda o SQLite; `claude`, `obsidian` (pelo cliente `mcp`) e `github` checam as integrações; `secrets` guarda o token no cofre do sistema; `process` roda executáveis com tempo-limite. Só `git` ainda é um módulo vazio. `tools/fake-claude/` é o Claude CLI falso dos testes.
 - **shadcn/ui ainda não instalado:** a stack prevê shadcn/ui instalado só pela CLI dele (`pnpm dlx shadcn@latest init`); falta rodar essa etapa num ambiente que alcance `ui.shadcn.com`.
