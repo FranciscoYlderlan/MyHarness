@@ -21,7 +21,10 @@ export function IndicadorIntegracoes({ aoAbrir }: { aoAbrir: () => void }) {
         : e.integracao
           ? NOME_DO_STATUS[e.integracao.status]
           : "com erro";
-    return { tipo, sit, rotulo: `${NOME_DA_INTEGRACAO[tipo]}: ${texto}` };
+    // AC-01: conectada, o indicador mostra o nome da conta (ex.: a do GitHub).
+    const conta = sit === "conectado" ? (e.integracao?.conta ?? null) : null;
+    const rotulo = `${NOME_DA_INTEGRACAO[tipo]}: ${texto}${conta ? `, conta ${conta}` : ""}`;
+    return { tipo, sit, conta, rotulo };
   });
 
   const geral: Situacao = itens.some((i) => i.sit === "erro")
@@ -51,6 +54,7 @@ export function IndicadorIntegracoes({ aoAbrir }: { aoAbrir: () => void }) {
           <span className="flex items-center gap-1.5">
             <span aria-hidden className={`size-2 rounded-full ${COR[i.sit]}`} />
             {NOME_DA_INTEGRACAO[i.tipo]}
+            {i.conta && <span className="text-muted-foreground">({i.conta})</span>}
           </span>
         </span>
       ))}

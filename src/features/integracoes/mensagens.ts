@@ -51,29 +51,33 @@ export function statusDepoisDoErro(erro: ErroCatalogo): StatusIntegracao | null 
   }
 }
 
+/** `<motivo>` do ERR-02, nas palavras do catálogo (M-47); o núcleo manda o código. */
 const MOTIVO_DO_OAUTH: Record<string, string> = {
   cancelado: "cancelada",
   access_denied: "recusada no GitHub",
-  expired_token: "o código expirou",
+  expired_token: "código expirado",
 };
 
-/** Mensagem ao usuário de um erro do catálogo, com os valores do momento. */
+/**
+ * Mensagem ao usuário de um erro do catálogo, com os valores do momento. Só texto do
+ * catálogo: sem o valor `<x>` que a mensagem exige, a tela mostra o id e o código do erro,
+ * em vez de inventar um texto.
+ */
 export function mensagemDoErro(erro: ErroCatalogo, tipo: TipoIntegracao): string {
   const p = erro.parametros;
   const nome = NOME_DA_INTEGRACAO[tipo];
+  const semValor = `${erro.id} ${erro.codigo}`;
   switch (erro.codigo) {
     case "CLAUDE_CLI_NAO_INSTALADO":
       return "Claude CLI não encontrado";
-    case "GITHUB_OAUTH_NAO_CONCLUIDO": {
-      const motivo = p.motivo ? MOTIVO_DO_OAUTH[p.motivo] : undefined;
-      return motivo
-        ? `Conexão com o GitHub não concluída (${motivo})`
-        : "Conexão com o GitHub não concluída";
-    }
+    case "GITHUB_OAUTH_NAO_CONCLUIDO":
+      return p.motivo
+        ? `Conexão com o GitHub não concluída: ${MOTIVO_DO_OAUTH[p.motivo] ?? p.motivo}.`
+        : semValor;
     case "OBSIDIAN_FECHADO":
-      return p.mensagem_da_cli || "O Obsidian está fechado.";
+      return p.mensagem_da_cli || semValor;
     case "LOGIN_CLAUDE_CLI_FALHOU":
-      return p.motivo || "tempo esgotado esperando o login";
+      return p.motivo || semValor;
     case "CLAUDE_CLI_DESCONECTADO":
       return "Conecte o Claude CLI para enviar";
     case "GITHUB_DESCONECTADO":
@@ -81,29 +85,22 @@ export function mensagemDoErro(erro: ErroCatalogo, tipo: TipoIntegracao): string
     case "OBSIDIAN_DESCONECTADO":
       return "Conecte o Obsidian para registrar";
     case "INTEGRACAO_FALHA_INESPERADA":
-      return `Falha inesperada com ${nome}: ${p.motivo || "motivo desconhecido"}. Tente de novo.`;
+      return p.motivo ? `Falha inesperada com ${nome}: ${p.motivo}. Tente de novo.` : semValor;
     case "FALHA_INTERNA":
-      return `Algo deu errado no MyHarness: ${p.motivo || "motivo desconhecido"}. Tente de novo.`;
+      return p.motivo ? `Algo deu errado no MyHarness: ${p.motivo}. Tente de novo.` : semValor;
     default:
-      return `${erro.id}: ${erro.codigo}`;
+      return semValor;
   }
 }
 
 /**
  * Converte o erro de um comando (ou a falha de chamar o núcleo) num item do catálogo. Falha
- * sem item próprio vira o ERR-55 `FALHA_INTERNA` com o motivo.
+ * de chamar o núcleo vira o ERR-55 `FALHA_INTERNA` com o motivo.
  */
 export function erroDoComando(erro: ErroIpc | unknown): ErroCatalogo {
   if (typeof erro === "object" && erro !== null && "tipo" in erro) {
     const e = erro as ErroIpc;
     if (e.tipo === "catalogo") return e.erro;
-    if (e.tipo === "interno") {
-      return {
-        codigo: "FALHA_INTERNA",
-        id: "ERR-55",
-        parametros: { motivo: "comando ainda não implementado no núcleo" },
-      };
-    }
   }
   return {
     codigo: "FALHA_INTERNA",

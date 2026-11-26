@@ -98,6 +98,77 @@ describe("CMP-03 indicador de integrações", () => {
   });
 });
 
+describe("CMP-03 conta e guarda de operação", () => {
+  it("AC-01: GitHub conectado deixa o indicador verde com o nome da conta", async () => {
+    iniciar(todasConectadas);
+    await waitFor(() => expect(indicador()).toHaveAttribute("data-situacao", "conectado"));
+    expect(indicador()).toHaveAccessibleName(/GitHub: conectado, conta FranciscoYlderlan/);
+    expect(indicador()).toHaveTextContent("(FranciscoYlderlan)");
+  });
+
+  it("checar não passa por cima de desconectar em andamento", async () => {
+    const nucleo = criarNucleoSimuladoDeIntegracoes(todasConectadas);
+    let testesDoGithub = 0;
+    let liberar: (() => void) | null = null;
+    mockCommands({
+      ...nucleo.handlers,
+      testarIntegracao: (args) => {
+        if (args.tipo === "github") testesDoGithub += 1;
+        return nucleo.handlers.testarIntegracao!(args);
+      },
+      desconectarIntegracao: (args) =>
+        new Promise((resolver) => {
+          liberar = () => resolver(nucleo.handlers.desconectarIntegracao!(args));
+        }),
+    });
+    render(<MainWindow />);
+    const painel = await abrirPainel();
+    const antes = testesDoGithub;
+    act(() => within(cartao("GitHub")).getByRole("button", { name: "Desconectar" }).click());
+    await waitFor(() => expect(cartao("GitHub")).toHaveTextContent("desconectando"));
+
+    // Fechar e abrir a TEL-02 checa as três, menos a que está desconectando.
+    act(() => within(painel).getByRole("button", { name: "Fechar" }).click());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => indicador().click());
+    await screen.findByRole("dialog", { name: "Integrações" });
+    expect(testesDoGithub).toBe(antes);
+    expect(cartao("GitHub")).toHaveTextContent("desconectando");
+
+    act(() => liberar!());
+    await waitFor(() => expect(cartao("GitHub")).toHaveTextContent("desconectado"));
+    expect(within(cartao("GitHub")).getByRole("button", { name: "Conectar" })).toBeInTheDocument();
+  });
+});
+
+describe("mensagens só do catálogo", () => {
+  it("sem o valor que a mensagem exige, mostra o id e o código, sem texto inventado", async () => {
+    const { mensagemDoErro } = await import("./mensagens");
+    expect(
+      mensagemDoErro(
+        { codigo: "INTEGRACAO_FALHA_INESPERADA", id: "ERR-53", parametros: {} },
+        "github",
+      ),
+    ).toBe("ERR-53 INTEGRACAO_FALHA_INESPERADA");
+    expect(
+      mensagemDoErro({ codigo: "OBSIDIAN_FECHADO", id: "ERR-03", parametros: {} }, "obsidian_cli"),
+    ).toBe("ERR-03 OBSIDIAN_FECHADO");
+    const motivos: [string, string][] = [
+      ["cancelado", "cancelada"],
+      ["access_denied", "recusada no GitHub"],
+      ["expired_token", "código expirado"],
+    ];
+    for (const [motivo, texto] of motivos) {
+      expect(
+        mensagemDoErro(
+          { codigo: "GITHUB_OAUTH_NAO_CONCLUIDO", id: "ERR-02", parametros: { motivo } },
+          "github",
+        ),
+      ).toBe(`Conexão com o GitHub não concluída: ${texto}.`);
+    }
+  });
+});
+
 describe("TEL-02 integrações", () => {
   it("AC-91: GitHub desconectado aparece em erro com o botão Conectar", async () => {
     iniciar({ ...todasConectadas, github: { status: "desconectado" } });
@@ -277,7 +348,7 @@ describe("TEL-02 integrações", () => {
     );
     await waitFor(() =>
       expect(within(c).getByRole("alert")).toHaveTextContent(
-        "Conexão com o GitHub não concluída (recusada no GitHub)",
+        "Conexão com o GitHub não concluída: recusada no GitHub.",
       ),
     );
     expect(c).toHaveTextContent("desconectado");
