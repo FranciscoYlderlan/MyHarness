@@ -6,15 +6,14 @@ use std::time::Duration;
 use my_harness_core::application::integracao::Integracao as IntegracaoCore;
 use my_harness_core::domain::integracao::{EstadoIntegracao, StatusIntegracao as StatusCore};
 use my_harness_core::domain::segredo::Segredo;
-use tauri::ipc::InvokeResponseBody;
 
 use super::*;
-use crate::commands::erro::ErroCatalogo;
-use crate::commands::integracoes::{IntegracaoSemConfiguracao, MascaraNucleo, RegistroEmMemoria};
+use crate::erro::ErroCatalogo;
 use crate::infra::github::falso::{CODIGO_DO_USUARIO, ENDERECO, GitHubFalso};
 use crate::infra::github::host::RespostaToken;
 use crate::infra::github::{ConfigGitHub, GitHub};
 use crate::infra::secrets::CofreEmMemoria;
+use crate::integracoes::{IntegracaoSemConfiguracao, MascaraNucleo, RegistroEmMemoria};
 
 fn nucleo() -> (NucleoMyHarness, Arc<GitHubFalso>, Arc<RegistroEmMemoria>) {
     let falso = Arc::new(GitHubFalso::novo());
@@ -129,19 +128,14 @@ fn catalogo(erro: ErroIpc) -> ErroCatalogo {
 }
 
 /// Canal que guarda o JSON de cada instrução enviada.
-fn canal() -> (
-    Channel<InstrucaoConexao>,
-    Arc<Mutex<Vec<serde_json::Value>>>,
-) {
+fn canal() -> (Canal<InstrucaoConexao>, Arc<Mutex<Vec<serde_json::Value>>>) {
     let recebidas = Arc::new(Mutex::new(Vec::new()));
     let destino = recebidas.clone();
-    let canal = Channel::new(move |corpo| {
-        if let InvokeResponseBody::Json(json) = corpo {
-            destino
-                .lock()
-                .unwrap()
-                .push(serde_json::from_str(&json).unwrap());
-        }
+    let canal = Canal::new(move |instrucao: InstrucaoConexao| {
+        destino
+            .lock()
+            .unwrap()
+            .push(serde_json::to_value(&instrucao).unwrap());
         Ok(())
     });
     (canal, recebidas)
@@ -211,7 +205,7 @@ async fn comandos_de_integracao_usam_as_integracoes_reais() {
 #[tokio::test]
 async fn rn_08_bloqueia_os_comandos_que_dependem_de_integracao() {
     let (n, _, _) = nucleo();
-    let saida = Channel::new(|_| Ok(()));
+    let saida = Canal::new(|_| Ok(()));
 
     // Sem Claude CLI: a checagem falha (ERR-53), e nada é enviado.
     let erro = catalogo(
@@ -230,7 +224,7 @@ async fn rn_08_bloqueia_os_comandos_que_dependem_de_integracao() {
             ChatId("c1".into()),
             "oi".into(),
             None,
-            Channel::new(|_| Ok(())),
+            Canal::new(|_| Ok(())),
         )
         .await
         .unwrap_err(),

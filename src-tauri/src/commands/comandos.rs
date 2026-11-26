@@ -6,10 +6,20 @@ use std::sync::Arc;
 use tauri::State;
 use tauri::ipc::Channel;
 
+use my_harness_app::canal::{Canal, CanalFechado};
+
 use super::dto::*;
 use super::erro::ComAvisos;
 use super::eventos::EventoExecucao;
 use super::nucleo::{Nucleo, Resultado};
+
+/// O canal do núcleo sobre o `Channel` do comando: cada mensagem vai à tela, em ordem.
+fn canal<T>(canal: Channel<T>) -> Canal<T>
+where
+    T: tauri::ipc::IpcResponse + Send + Sync + 'static,
+{
+    Canal::new(move |mensagem| canal.send(mensagem).map_err(|_| CanalFechado))
+}
 
 /// O núcleo como estado do Tauri.
 pub type NucleoApp = Arc<dyn Nucleo>;
@@ -38,7 +48,7 @@ pub async fn conectar_integracao(
     tipo: TipoIntegracao,
     instrucoes: Channel<InstrucaoConexao>,
 ) -> Resultado<Integracao> {
-    nucleo.conectar_integracao(tipo, instrucoes).await
+    nucleo.conectar_integracao(tipo, canal(instrucoes)).await
 }
 /// Desconecta (CMP-11). Erro: ERR-53.
 #[tauri::command]
@@ -117,7 +127,9 @@ pub async fn enviar_prompt(
     modelo: Option<String>,
     saida: Channel<EventoExecucao>,
 ) -> Resultado<Execucao> {
-    nucleo.enviar_prompt(chat, texto, modelo, saida).await
+    nucleo
+        .enviar_prompt(chat, texto, modelo, canal(saida))
+        .await
 }
 /// "Passar o turno" no aviso de limite (RN-23, UC-08). Erros: ERR-07, ERR-29.
 #[tauri::command]
@@ -150,7 +162,7 @@ pub async fn acompanhar_execucao(
     execucao: ExecucaoId,
     saida: Channel<EventoExecucao>,
 ) -> Resultado<()> {
-    nucleo.acompanhar_execucao(execucao, saida).await
+    nucleo.acompanhar_execucao(execucao, canal(saida)).await
 }
 
 // Plano de delegação (ENT-05, ENT-06; CMP-12, CMP-13)

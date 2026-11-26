@@ -26,13 +26,13 @@ use my_harness_core::domain::integracao::{
     TipoIntegracao as TipoCore,
 };
 use my_harness_core::domain::segredo::TextoMascarado;
-use tauri::ipc::Channel;
 use tokio::sync::{Notify, watch};
 
-use super::dto::*;
-use super::erro::{CodigoErro, ComAvisos, ErroIpc};
-use super::eventos::EventoExecucao;
-use super::integracoes::{EntradaRegistro, RegistroNucleo, ServicoIntegracoes};
+use crate::canal::Canal;
+use crate::dto::*;
+use crate::erro::{CodigoErro, ComAvisos, ErroIpc};
+use crate::eventos::EventoExecucao;
+use crate::integracoes::{EntradaRegistro, RegistroNucleo, ServicoIntegracoes};
 
 /// Resultado de todo comando.
 pub type Resultado<T> = Result<T, ErroIpc>;
@@ -45,7 +45,7 @@ pub trait Nucleo: Send + Sync {
     async fn conectar_integracao(
         &self,
         tipo: TipoIntegracao,
-        instrucoes: Channel<InstrucaoConexao>,
+        instrucoes: Canal<InstrucaoConexao>,
     ) -> Resultado<Integracao>;
     async fn desconectar_integracao(&self, tipo: TipoIntegracao) -> Resultado<Integracao>;
 
@@ -70,7 +70,7 @@ pub trait Nucleo: Send + Sync {
         chat: ChatId,
         texto: String,
         modelo: Option<String>,
-        saida: Channel<EventoExecucao>,
+        saida: Canal<EventoExecucao>,
     ) -> Resultado<Execucao>;
     async fn aceitar_passagem(&self, chat: ChatId) -> Resultado<Chat>;
     async fn continuar_no_chat(&self, chat: ChatId) -> Resultado<Chat>;
@@ -80,7 +80,7 @@ pub trait Nucleo: Send + Sync {
     async fn acompanhar_execucao(
         &self,
         execucao: ExecucaoId,
-        saida: Channel<EventoExecucao>,
+        saida: Canal<EventoExecucao>,
     ) -> Resultado<()>;
 
     // Plano de delegação (ENT-05, ENT-06; CMP-12, CMP-13)
@@ -250,11 +250,11 @@ struct ConexaoEmAndamento {
 #[derive(Default)]
 struct Ouvintes {
     instrucoes: Vec<InstrucaoConexao>,
-    canais: Vec<Channel<InstrucaoConexao>>,
+    canais: Vec<Canal<InstrucaoConexao>>,
 }
 
 impl ConexaoEmAndamento {
-    fn nova(canal: Channel<InstrucaoConexao>) -> Self {
+    fn nova(canal: Canal<InstrucaoConexao>) -> Self {
         Self {
             ouvintes: Mutex::new(Ouvintes {
                 instrucoes: Vec::new(),
@@ -271,7 +271,7 @@ impl ConexaoEmAndamento {
     }
 
     /// Mais um pedido de "Conectar": recebe as instruções já mandadas e as próximas.
-    fn juntar(&self, canal: Channel<InstrucaoConexao>) {
+    fn juntar(&self, canal: Canal<InstrucaoConexao>) {
         let mut ouvintes = self.ouvintes();
         for instrucao in &ouvintes.instrucoes {
             // Tela fechada: a instrução se perde; a conexão segue.
@@ -404,7 +404,7 @@ impl Nucleo for NucleoMyHarness {
     async fn conectar_integracao(
         &self,
         tipo: TipoIntegracao,
-        instrucoes: Channel<InstrucaoConexao>,
+        instrucoes: Canal<InstrucaoConexao>,
     ) -> Resultado<Integracao> {
         let (conexao, nova) = {
             let mut conexoes = self.conexoes();
@@ -478,7 +478,7 @@ impl Nucleo for NucleoMyHarness {
         _chat: ChatId,
         _texto: String,
         _modelo: Option<String>,
-        _saida: Channel<EventoExecucao>,
+        _saida: Canal<EventoExecucao>,
     ) -> Resultado<Execucao> {
         // RN-08 (UC-02 FE-01): sem o Claude CLI conectado, nada é enviado (ERR-05).
         self.integracoes.exigir(TipoCore::ClaudeCli).await?;
@@ -497,7 +497,7 @@ impl Nucleo for NucleoMyHarness {
     async fn acompanhar_execucao(
         &self,
         _execucao: ExecucaoId,
-        _saida: Channel<EventoExecucao>,
+        _saida: Canal<EventoExecucao>,
     ) -> Resultado<()> {
         self.nao_implementado("acompanhar_execucao")
     }

@@ -1,7 +1,9 @@
-//! MyHarness desktop shell: Tauri commands and infrastructure adapters.
+//! MyHarness desktop shell: the Tauri commands, the events and the app start. The core and
+//! the infrastructure adapters live in `my-harness-app`, without Tauri.
 
 pub mod commands;
-pub mod infra;
+
+pub use my_harness_app::infra;
 
 use std::sync::Arc;
 

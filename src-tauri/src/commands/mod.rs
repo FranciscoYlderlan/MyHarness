@@ -8,15 +8,16 @@
 //! - [`nucleo`]: a interface que os comandos chamam e o corpo dela.
 //! - [`comandos`]: os comandos do Tauri.
 //!
+//! `dto`, `erro`, `integracoes` e `nucleo` moram no crate `my-harness-app`, sem o Tauri;
+//! aqui ficam só os comandos, os eventos globais e a exportação dos bindings.
+//!
 //! Gerar os bindings de novo: `pnpm bindings`. O teste `bindings_estao_em_dia` falha
 //! se o arquivo commitado divergir do que o Rust gera.
 
 pub mod comandos;
-pub mod dto;
-pub mod erro;
 pub mod eventos;
-pub mod integracoes;
-pub mod nucleo;
+
+pub use my_harness_app::{dto, erro, integracoes, nucleo};
 
 use std::io::Write;
 use std::path::Path;

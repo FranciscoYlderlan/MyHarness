@@ -1,8 +1,8 @@
 //! Schema of the contract entities (`0002_contract_entities.sql`, 02-entidades): every restriction
 //! accepts the valid value and rejects the invalid one with its own constraint.
 
-use my_harness_lib::infra::db::Database;
-use my_harness_lib::infra::db::dual_write::DUAL_WRITE_TABLES;
+use my_harness_app::infra::db::Database;
+use my_harness_app::infra::db::dual_write::DUAL_WRITE_TABLES;
 use sqlx::{AssertSqlSafe, SqlitePool};
 
 struct Fixture {
