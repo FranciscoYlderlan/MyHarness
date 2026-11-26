@@ -90,6 +90,12 @@ impl ServidorFalso {
         Self { porta, estado }
     }
 
+    /// Tempo limite dos testes de servidor fora do ar. No Windows, a conexão a uma porta
+    /// fechada de `127.0.0.1` não falha na hora: depois do RST, o TCP envia o SYN de novo
+    /// (`TcpMaxConnectRetransmissions`) e a recusa só chega em cerca de 2 s. Um limite
+    /// de 2 s esgota antes da recusa; este fica bem acima dela.
+    pub const LIMITE_FORA_DO_AR: Duration = Duration::from_secs(10);
+
     /// Endereço de uma porta onde ninguém escuta (servidor fora do ar).
     pub async fn url_sem_ninguem() -> String {
         format!("http://127.0.0.1:{}/mcp", Self::porta_livre().await)

@@ -130,7 +130,10 @@ async fn token_na_mensagem_da_cli_sai_mascarado_no_err_03_e_no_err_53() {
 async fn servidor_fora_do_ar_da_err_53_e_conectar_de_novo_funciona() {
     let porta = ServidorFalso::porta_livre().await;
     let url = format!("http://127.0.0.1:{porta}/mcp");
-    let obsidian = ObsidianCli::new(config(&url));
+    let obsidian = ObsidianCli::new(ConfigObsidian {
+        tempo_limite: ServidorFalso::LIMITE_FORA_DO_AR,
+        ..config(&url)
+    });
 
     let erro = obsidian.testar().await.unwrap_err();
     assert_eq!(erro.id(), "ERR-53");

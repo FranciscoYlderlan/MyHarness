@@ -16,7 +16,8 @@
 -- `PRAGMA foreign_keys` is a no-op inside a transaction, hence `no-transaction` with an explicit
 -- BEGIN/COMMIT; `migracao_0003_fk` makes the commit fail if any reference is left dangling.
 -- Rows of the rebuilt tables have no value for the new required links: a database that already
--- holds tarefa, relatorio, achado or escrita rows stops here with a NOT NULL error and nothing changes.
+-- holds tarefa, relatorio, achado or escrita rows stops here with a NOT NULL error and nothing changes;
+-- `Database::open` then deletes that database and creates it again (no version is published yet).
 
 PRAGMA foreign_keys = OFF;
 
@@ -302,12 +303,14 @@ BEGIN
     SELECT RAISE(ABORT, 'plano_delegacao_aprovado_sem_incompleta');
 END;
 
--- RN-17 / ERR-14: comandos lists the commands the agent ran (the core denies push, merge and
--- push --force before they run): non-blank command lines, none of them a git push or merge
--- (`push --force` included) nor `gh pr merge`. Command lines are compared in lower case, with
--- tabs, line breaks and repeated spaces as one space, and the program allowed with a path or `.exe`.
--- Only the subcommand right after the program is matched (`git -C x push` is not): a commit message
--- with the word "push" or "merge" must still be recorded. The core gate is the real barrier (RN-27).
+-- RN-17 / ERR-14: comandos lists the commands the agent ran, as non-blank command lines. The push
+-- and merge check below is best effort, not a barrier: each line is compared in lower case, with
+-- tabs and line breaks as spaces and runs of up to 8 spaces as one, and only `git push`,
+-- `git merge` (`push --force` included) and `gh pr merge` written with the subcommand right after
+-- the program (a path or `.exe` allowed) are refused. Forms such as `git -C x push`,
+-- `git --no-pager push`, `"git" push`, `cd x&&git push` or 9 or more spaces before `push` get
+-- through, and a commit message with the word "push" or "merge" must still be recorded. The real
+-- barrier is the core gate, which denies push, merge and push --force before they run (RN-27).
 CREATE TRIGGER execucao_comandos_texto_insert BEFORE INSERT ON execucao
 WHEN json_valid(NEW.comandos) AND json_type(NEW.comandos) = 'array' AND EXISTS (
     SELECT 1 FROM json_each(NEW.comandos)
