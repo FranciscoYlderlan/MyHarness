@@ -3,4 +3,5 @@
 pub mod evento_cli;
 pub mod execucao;
 pub mod integracao;
+pub mod observador_execucao;
 pub mod segredo;
