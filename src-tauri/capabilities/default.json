@@ -8,9 +8,9 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "https://github.com/*" },
+        { "url": "https://github.com/login/device" },
         { "url": "https://docs.claude.com/en/docs/claude-code/setup" },
-        { "url": "obsidian://*" }
+        { "url": "obsidian://open" }
       ]
     }
   ]
