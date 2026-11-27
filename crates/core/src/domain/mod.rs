@@ -2,4 +2,5 @@
 
 pub mod execucao;
 pub mod integracao;
+pub mod politica;
 pub mod segredo;
