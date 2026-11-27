@@ -7,12 +7,15 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 
 /**
  * Na janela do Tauri, entrega `url` ao sistema e devolve `true`: quem chama cancela a
- * navegação do `<a>`. Fora dela, devolve `false` e o `<a>` segue o comportamento comum.
+ * navegação do `<a>`. Se o sistema recusar o pedido (fora do escopo, sem app para o
+ * protocolo), chama `aoFalhar`, para a tela mostrar a falha. Fora da janela, devolve
+ * `false` e o `<a>` segue o comportamento comum.
  */
-export function abrirLinkExterno(url: string): boolean {
+export function abrirLinkExterno(url: string, aoFalhar?: (erro: unknown) => void): boolean {
   if (!isTauri()) return false;
   openUrl(url).catch((erro: unknown) => {
     console.error(`não foi possível abrir o link externo ${url}:`, erro);
+    aoFalhar?.(erro);
   });
   return true;
 }

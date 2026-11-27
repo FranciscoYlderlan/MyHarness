@@ -120,6 +120,55 @@ describe("links externos da TEL-02 na janela do Tauri", () => {
   });
 });
 
+describe("falha ao abrir um link externo na janela do Tauri", () => {
+  beforeEach(() => {
+    naJanelaDoTauri(true);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(openUrl).mockRejectedValueOnce(new Error("Not allowed to open url"));
+  });
+
+  afterEach(() => vi.mocked(console.error).mockRestore());
+
+  const falha = "Não foi possível abrir o link. Abra este endereço manualmente:";
+
+  it("o cartão do GitHub mostra a falha do link do device, com o endereço", async () => {
+    const link = await linkDoDevice();
+    const c = cartao("GitHub");
+    expect(within(c).queryByRole("alert")).not.toBeInTheDocument();
+    expect(clicar(link)).toBe(true);
+    const alerta = await within(c).findByRole("alert");
+    expect(alerta).toHaveTextContent(`${falha} https://github.com/login/device`);
+  });
+
+  it("o cartão do Claude CLI mostra a falha do link de instalação", async () => {
+    const link = await linkDeInstalacao();
+    expect(clicar(link)).toBe(true);
+    await waitFor(() =>
+      expect(cartao("Claude CLI")).toHaveTextContent(
+        `${falha} https://docs.claude.com/en/docs/claude-code/setup`,
+      ),
+    );
+  });
+
+  it("o cartão do Obsidian CLI mostra a falha de Abrir Obsidian", async () => {
+    const link = await linkAbrirObsidian();
+    expect(clicar(link)).toBe(true);
+    await waitFor(() =>
+      expect(cartao("Obsidian CLI")).toHaveTextContent(`${falha} obsidian://open`),
+    );
+  });
+
+  it("um novo clique que abre o link tira a falha do cartão", async () => {
+    const link = await linkDoDevice();
+    const c = cartao("GitHub");
+    clicar(link);
+    await within(c).findByRole("alert");
+    clicar(link);
+    await waitFor(() => expect(within(c).queryByRole("alert")).not.toBeInTheDocument());
+    expect(openUrl).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("links externos da TEL-02 no navegador (dev:simulado)", () => {
   beforeEach(() => naJanelaDoTauri(false));
 
