@@ -132,9 +132,7 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
             <LinkExterno href={LINK_DE_INSTALACAO_DO_CLAUDE_CLI}>Instalar o Claude CLI</LinkExterno>
           )}
           {erro?.codigo === "OBSIDIAN_FECHADO" && (
-            <a href={LINK_ABRIR_OBSIDIAN} className="text-primary underline">
-              Abrir Obsidian
-            </a>
+            <LinkExterno href={LINK_ABRIR_OBSIDIAN}>Abrir Obsidian</LinkExterno>
           )}
         </div>
       )}

@@ -7,6 +7,7 @@ import { MainWindow } from "@/app/main-window";
 import { mockCommands } from "@/bindings";
 import {
   criarNucleoSimuladoDeIntegracoes,
+  erroDoCatalogo,
   type NucleoSimuladoDeIntegracoes,
 } from "@/lib/ipc/nucleo-simulado-integracoes";
 
@@ -81,6 +82,20 @@ async function linkDeInstalacao(): Promise<HTMLElement> {
   return within(cartao("Claude CLI")).getByRole("link", { name: "Instalar o Claude CLI" });
 }
 
+async function linkAbrirObsidian(): Promise<HTMLElement> {
+  const nucleo = iniciar(todasConectadas);
+  await waitFor(() => expect(indicador()).toHaveAttribute("data-situacao", "conectado"));
+  nucleo.falharChecagem(
+    "obsidian_cli",
+    erroDoCatalogo("OBSIDIAN_FECHADO", "ERR-03", {
+      integracao: "Obsidian CLI",
+      mensagem_da_cli: "The CLI is unable to find Obsidian. Make sure Obsidian is running.",
+    }),
+  );
+  await abrirPainel();
+  return within(cartao("Obsidian CLI")).getByRole("link", { name: "Abrir Obsidian" });
+}
+
 describe("links externos da TEL-02 na janela do Tauri", () => {
   beforeEach(() => naJanelaDoTauri(true));
 
@@ -97,6 +112,12 @@ describe("links externos da TEL-02 na janela do Tauri", () => {
       "https://docs.claude.com/en/docs/claude-code/setup",
     );
   });
+
+  it("AC-05: Abrir Obsidian abre pelo sistema, com obsidian://open (ERR-03)", async () => {
+    const link = await linkAbrirObsidian();
+    expect(clicar(link)).toBe(true);
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith("obsidian://open");
+  });
 });
 
 describe("links externos da TEL-02 no navegador (dev:simulado)", () => {
@@ -112,6 +133,14 @@ describe("links externos da TEL-02 no navegador (dev:simulado)", () => {
   it("o link de instalação segue como link comum, em aba nova", async () => {
     const link = await linkDeInstalacao();
     expect(link).toHaveAttribute("target", "_blank");
+    expect(clicar(link)).toBe(false);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("Abrir Obsidian segue como link comum do protocolo, na mesma aba", async () => {
+    const link = await linkAbrirObsidian();
+    expect(link).toHaveAttribute("href", "obsidian://open");
+    expect(link).not.toHaveAttribute("target");
     expect(clicar(link)).toBe(false);
     expect(openUrl).not.toHaveBeenCalled();
   });
