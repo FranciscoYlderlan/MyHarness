@@ -1,7 +1,10 @@
 // O roteiro do `dev:simulado` sobre o mesmo núcleo simulado dos testes da TEL-02.
 import type { Channel } from "@tauri-apps/api/core";
 import type { InstrucaoConexao } from "@/bindings";
-import { criarNucleoSimulado, INSTRUCOES_SIMULADAS } from "./nucleo-simulado";
+import { INSTRUCOES_SIMULADAS } from "./funcionalidades/integracoes";
+import { FUNCIONALIDADES_SIMULADAS, juntarCenarios } from "./cenarios";
+import type { FuncionalidadeSimulada } from "./funcionalidade-simulada";
+import { criarNucleoSimulado, juntarNucleos } from "./nucleo-simulado";
 
 function canal() {
   const recebidas: InstrucaoConexao[] = [];
@@ -45,5 +48,58 @@ describe("núcleo do dev:simulado", () => {
     const { handlers } = criarNucleoSimulado();
     const resultado = await handlers.conectarIntegracao!({ tipo: "obsidian_cli", ...canal() });
     expect(resultado).toMatchObject({ status: "conectado", notas_indexadas: 128 });
+  });
+});
+
+describe("composição por funcionalidade", () => {
+  const vazia = (nome: string, cenarios: Record<string, { descricao: string }> = {}) =>
+    ({
+      nome,
+      padrao: `${nome} vazio`,
+      cenarios,
+      criar: () => ({ handlers: {}, controle: undefined }),
+    }) as unknown as FuncionalidadeSimulada;
+
+  it("junta os arquivos de src/dev/funcionalidades/, com integracoes entre eles", () => {
+    expect(FUNCIONALIDADES_SIMULADAS.map((f) => f.nome)).toContain("integracoes");
+    const nucleo = criarNucleoSimulado();
+    expect(nucleo.integracoes.estado("claude_cli").status).toBe("conectado");
+    expect(nucleo.handlers.listarIntegracoes).toBeTypeOf("function");
+  });
+
+  it("o padrão descreve o estado padrão de cada funcionalidade", () => {
+    const cenarios = juntarCenarios([
+      vazia("a"),
+      vazia("b", { "b-cheio": { descricao: "cheio" } }),
+    ]);
+    expect(cenarios).toEqual({
+      padrao: { descricao: "a: a vazio · b: b vazio", funcionalidade: null },
+      "b-cheio": { descricao: "cheio", funcionalidade: "b" },
+    });
+  });
+
+  it("cenário com o mesmo nome em duas funcionalidades é erro", () => {
+    const x = { x: { descricao: "x" } };
+    expect(() => juntarCenarios([vazia("a", x), vazia("b", x)])).toThrow(
+      'cenário "x" repetido: b e a',
+    );
+    expect(() => juntarCenarios([vazia("a", { padrao: { descricao: "p" } })])).toThrow(
+      'cenário "padrao" repetido',
+    );
+  });
+
+  it("comando com handler em duas funcionalidades é erro", () => {
+    const comLista = (nome: string) =>
+      ({
+        ...vazia(nome),
+        criar: () => ({ handlers: { listarIntegracoes: () => [] }, controle: undefined }),
+      }) as unknown as FuncionalidadeSimulada;
+    expect(() =>
+      juntarNucleos([comLista("a"), comLista("b")], { cenario: "padrao", atrasoMs: 0 }),
+    ).toThrow('comando "listarIntegracoes" repetido no núcleo simulado: a e b');
+  });
+
+  it("cenário desconhecido é erro", () => {
+    expect(() => criarNucleoSimulado({ cenario: "nao-existe" })).toThrow("cenário desconhecido");
   });
 });

@@ -4,7 +4,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { MainWindow } from "@/app/main-window";
 import { mockCommands } from "@/bindings";
-import { CENARIO_PADRAO, CENARIOS, cenarioDaUrl } from "./cenarios";
+import { CENARIO_PADRAO, CENARIOS, cenarioDaUrl, cenariosDa } from "./cenarios";
 import { criarNucleoSimulado } from "./nucleo-simulado";
 
 afterEach(() => {
@@ -111,10 +111,13 @@ async function abrirTel02(cenario: string) {
 }
 
 describe("cenários do dev:simulado", () => {
-  it("todo cenário tem o estado esperado da TEL-02 neste teste", () => {
-    expect(Object.keys(ESPERADO).sort()).toEqual(Object.keys(CENARIOS).sort());
+  it("todo cenário das integrações tem o estado esperado da TEL-02 neste teste", () => {
+    expect(Object.keys(ESPERADO).sort()).toEqual(
+      [CENARIO_PADRAO, ...cenariosDa("integracoes")].sort(),
+    );
   });
 
+  // Cenário de outra funcionalidade: a TEL-02 abre no estado padrão.
   it.each(Object.keys(CENARIOS))("%s abre a TEL-02 no estado dele", async (nome) => {
     await abrirTel02(nome);
     const esperado = { ...PADRAO, ...ESPERADO[nome] };
