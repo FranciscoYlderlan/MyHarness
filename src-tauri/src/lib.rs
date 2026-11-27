@@ -15,6 +15,9 @@ use tauri_specta::Event;
 pub fn run() {
     let ipc = commands::construtor();
     tauri::Builder::default()
+        // External links of the TEL-02 open in the system apps, not in the window
+        // (scope in `capabilities/default.json`).
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(ipc.invoke_handler())
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;

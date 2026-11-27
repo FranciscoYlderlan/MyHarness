@@ -16,6 +16,7 @@ tauri-build = { workspace = true }
 [dependencies]
 my-harness-app = { workspace = true }
 tauri = { workspace = true }
+tauri-plugin-opener = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 specta = { workspace = true }

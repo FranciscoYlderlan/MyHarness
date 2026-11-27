@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { TipoIntegracao } from "@/lib/ipc";
 import { useIntegracoes } from "./contexto";
 import { situacao, type Operacao } from "./estado";
+import { LinkExterno } from "./link-externo";
 import {
   LINK_ABRIR_OBSIDIAN,
   LINK_DE_INSTALACAO_DO_CLAUDE_CLI,
@@ -106,14 +107,9 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
                   {instrucao.codigo}
                 </code>{" "}
                 em{" "}
-                <a
-                  href={instrucao.endereco}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary underline"
-                >
+                <LinkExterno href={instrucao.endereco}>
                   {instrucao.endereco.replace(/^https?:\/\//, "")}
-                </a>
+                </LinkExterno>
               </li>
             ) : (
               <li key={i}>{instrucao.texto}</li>
@@ -133,14 +129,7 @@ export function CartaoIntegracao({ tipo }: { tipo: TipoIntegracao }) {
                 )}
           </p>
           {naoInstalado && (
-            <a
-              href={LINK_DE_INSTALACAO_DO_CLAUDE_CLI}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary underline"
-            >
-              Instalar o Claude CLI
-            </a>
+            <LinkExterno href={LINK_DE_INSTALACAO_DO_CLAUDE_CLI}>Instalar o Claude CLI</LinkExterno>
           )}
           {erro?.codigo === "OBSIDIAN_FECHADO" && (
             <a href={LINK_ABRIR_OBSIDIAN} className="text-primary underline">
