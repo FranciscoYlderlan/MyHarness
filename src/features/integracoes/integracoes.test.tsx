@@ -264,8 +264,11 @@ describe("TEL-02 integrações", () => {
       ),
     );
     act(() => within(c).getByRole("button", { name: "Repetir" }).click());
-    await waitFor(() => expect(within(c).queryByRole("alert")).not.toBeInTheDocument());
-    expect(c).toHaveTextContent("desconectado");
+    // O alerta some já no "desconectando": esperar o estado final, não só o sumiço.
+    await waitFor(() => {
+      expect(within(c).queryByRole("alert")).not.toBeInTheDocument();
+      expect(c).toHaveTextContent("desconectado");
+    });
   });
 
   it("AC-88: Claude CLI sem login, o /login mostra as mensagens e conclui conectado", async () => {
